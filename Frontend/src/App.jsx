@@ -3,13 +3,23 @@ import {
   ReactFlow,
   Background,
   Controls,
-  applyNodeChanges,
-  applyEdgeChanges,
   addEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-
 const API = 'http://127.0.0.1:8000';
+
+let wsId = localStorage.getItem('rg_workspace_id');
+if (!wsId) {
+  const wsRes = await fetch(`${API}/workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'SMOTE Research Workspace' }),
+  });
+  const ws = await wsRes.json();
+  wsId = ws.id;
+  localStorage.setItem('rg_workspace_id', wsId);
+}
+setWorkspaceId(wsId);
 
 export default function App() {
   const [workspaceId, setWorkspaceId] = useState(null);
@@ -50,11 +60,11 @@ export default function App() {
   }, []);
 
   const onNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    (changes) => setNodes((nds) => changes.applyTo(nds)),
     []
   );
   const onEdgesChange = useCallback(
-    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    (changes) => setEdges((eds) => changes.applyTo(eds)),
     []
   );
 
