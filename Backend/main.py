@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import aiosqlite
 from db import get_db
+from agents import run_reader_and_clusterer
 
 app = FastAPI(title="ResearchGraph API")
 
@@ -130,3 +131,7 @@ async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = 
     )
     await db.commit()
     return {"status": body.decision, "log_id": log_id}
+
+@app.post("/workspaces/{workspace_id}/agents/analyze")
+async def analyze_workspace(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    return await run_reader_and_clusterer(workspace_id, db)
