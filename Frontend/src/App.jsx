@@ -185,16 +185,13 @@ export default function App() {
 
   // Approve or Reject a pending agent action (and refresh graph if experiment ran)
   const handleDecision = async (logId, decision) => {
-    const response = await fetch(`${API}/logs/${logId}/decision`, {
+    await fetch(`${API}/logs/${logId}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     });
-    if (!response.ok) {
-      throw new Error(`Could not ${decision} agent action (${response.status})`);
-    }
     await refreshGraph(workspaceId);
-    await fetchAgentData();
+    fetchAgentData();
   };
 
   // Workflow 1: Trigger Reader & Clusterer Agents via local Llama
@@ -224,6 +221,38 @@ export default function App() {
       method: 'POST',
     });
     fetchAgentData();
+  };
+
+  // Workflow 3A: Ask "What If" and re-run
+  const runWhatIf = async () => {
+    if (!workspaceId) return;
+    const question = prompt(
+      'Ask a "What If" question:',
+      'What if we use Random Forest with k=3?'
+    );
+    if (!question) return;
+
+    await fetch(`${API}/workspaces/${workspaceId}/agents/what-if`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    await refreshGraph(workspaceId);
+    fetchAgentData();
+  };
+
+  // Workflow 3B: Export workspace as Markdown report
+  const exportWorkspace = async () => {
+    if (!workspaceId) return;
+    const res = await fetch(`${API}/workspaces/${workspaceId}/export`);
+    const markdown = await res.text();
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'researchgraph-report.md';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -261,6 +290,32 @@ export default function App() {
           }}
         >
           🧪 Run Reproduction
+        </button>
+        <button
+          onClick={runWhatIf}
+          style={{
+            background: '#7c3aed',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          🤔 Ask "What If"
+        </button>
+        <button
+          onClick={exportWorkspace}
+          style={{
+            background: '#334155',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          📥 Export MD
         </button>
       </div>
 

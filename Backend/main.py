@@ -6,6 +6,13 @@ from pydantic import BaseModel
 import aiosqlite
 from db import get_db
 from agents import run_reader_and_clusterer, request_experiment_approval, execute_experiment_with_debugger
+from fastapi.responses import PlainTextResponse
+from agents import (
+    run_reader_and_clusterer,
+    request_experiment_approval,
+    execute_experiment_with_debugger,
+    run_what_if_experiment,
+)
 
 app = FastAPI(title="ResearchGraph API")
 
@@ -139,3 +146,33 @@ async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = 
         await execute_experiment_with_debugger(log_row["workspace_id"], db)
 
     return {"status": body.decision, "log_id": log_id}
+
+class WhatIfRequest(BaseModel):
+    question: str
+
+@app.post("/workspaces/{workspace_id}/agents/what-if")
+async def what_if_experiment(workspace_id: str, body: WhatIfRequest, db: aiosqlite.Connection = Depends(get_db)):
+    return await run_what_if_experiment(workspace_id, body.question, db)
+
+@app.get("/workspaces/{workspace_id}/export", response_class=PlainTextResponse)
+async def export_workspace(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    ws = await (await db.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,))).fetchone()
+    nodes = await (await db.execute("SELECT * FROM nodes WHERE workspace_id = ?", (workspace_id,))).fetchall()
+    edges = await (await db.execute("SELECT * FROM edges WHERE workspace_id = ?", (workspace_id,))).fetchall()
+
+    node_map = {n["id"]: n["title"] for n in nodes}
+    lines = [f"# ResearchGraph Report: {ws['name'] if ws else workspace_id}\n"]
+
+    lines.append("## Nodes & Findings")
+    for n in nodes:
+        lines.append(f"- **[{n['type'].upper()}] {n['title']}**")
+        if n["content"]:
+            lines.append(f"  - {n['content']}")
+
+    lines.append("\n## Relationships")
+    for e in edges:
+        src = node_map.get(e["source_id"], e["source_id"])
+        tgt = node_map.get(e["target_id"], e["target_id"])
+        lines.append(f"- {src} `--({e['label']})-->` {tgt}")
+
+    return "\n".join(lines)
