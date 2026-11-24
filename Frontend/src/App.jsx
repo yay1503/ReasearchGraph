@@ -186,9 +186,9 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0b0f19', color: '#e2e8f0' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#0b0f19', color: '#e2e8f0' }}>
       {/* Top Bar */}
-      <div style={{ padding: '10px 16px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', gap: '10px', alignItems: 'center' }}>
+      <div style={{ padding: '10px 16px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 }}>
         <strong style={{ marginRight: '12px' }}>ResearchGraph</strong>
         <button onClick={() => addNode('paper')}>+ Add Paper</button>
         <button onClick={() => addNode('question')}>+ Add Question</button>
@@ -196,9 +196,9 @@ export default function App() {
       </div>
 
       {/* Main Content: Canvas + Agent Control Sidebar */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
         {/* Interactive Canvas */}
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -216,7 +216,7 @@ export default function App() {
         </div>
 
         {/* Right-Hand Agent Control Sidebar (320px) */}
-        <div style={{ width: '320px', background: '#0f172a', borderLeft: '1px solid #1e293b', display: 'flex', flexDirection: 'column', padding: '14px', overflowY: 'auto', gap: '16px' }}>
+        <div style={{ width: '320px', flexShrink: 0, background: '#0f172a', borderLeft: '1px solid #1e293b', display: 'flex', flexDirection: 'column', padding: '14px', overflowY: 'auto', gap: '16px' }}>
           {/* 1. Agent Roster */}
           <div>
             <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', color: '#94a3b8' }}>
