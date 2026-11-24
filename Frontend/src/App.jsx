@@ -15,6 +15,7 @@ export default function App() {
   const [edges, setEdges] = useState([]);
   const [agents, setAgents] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Delete a node from SQLite and remove it (+ its connected edges) from the canvas
   const deleteNode = useCallback(async (nodeId) => {
@@ -185,6 +186,37 @@ export default function App() {
     fetchAgentData();
   };
 
+  // Workflow 1: Trigger Reader & Clusterer Agents via local Llama
+  const runAnalyze = async () => {
+    if (!workspaceId) return;
+    setIsAnalyzing(true);
+    try {
+      const res = await fetch(`${API}/workspaces/${workspaceId}/agents/analyze`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+
+      const graphRes = await fetch(`${API}/workspaces/${workspaceId}/graph`);
+      const graph = await graphRes.json();
+      setNodes(graph.nodes.map(formatNode));
+      setEdges(
+        graph.edges.map((e) => ({
+          id: e.id,
+          source: e.source_id,
+          target: e.target_id,
+          label: e.label,
+        }))
+      );
+      fetchAgentData();
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   return (
     <div style={{ width: '100%', height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#0b0f19', color: '#e2e8f0' }}>
       {/* Top Bar */}
@@ -193,6 +225,21 @@ export default function App() {
         <button onClick={() => addNode('paper')}>+ Add Paper</button>
         <button onClick={() => addNode('question')}>+ Add Question</button>
         <button onClick={() => addNode('note')}>+ Add Note</button>
+        <button
+          onClick={runAnalyze}
+          disabled={isAnalyzing}
+          style={{
+            marginLeft: 'auto',
+            background: isAnalyzing ? '#475569' : '#2563eb',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            cursor: isAnalyzing ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {isAnalyzing ? 'Analyzing...' : '⚡ Analyze & Cluster'}
+        </button>
       </div>
 
       {/* Main Content: Canvas + Agent Control Sidebar */}
