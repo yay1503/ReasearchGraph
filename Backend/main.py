@@ -57,3 +57,29 @@ async def create_node(node: NodeCreate, db: aiosqlite.Connection = Depends(get_d
     )
     await db.commit()
     return {"id": node_id, **node.model_dump()}
+
+class NodePositionUpdate(BaseModel):
+    pos_x: float
+    pos_y: float
+
+class EdgeCreate(BaseModel):
+    workspace_id: str
+    source_id: str
+    target_id: str
+    label: str = ""
+
+@app.patch("/nodes/{node_id}/position")
+async def update_node_position(node_id: str, pos: NodePositionUpdate, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("UPDATE nodes SET pos_x = ?, pos_y = ? WHERE id = ?", (pos.pos_x, pos.pos_y, node_id))
+    await db.commit()
+    return {"status": "updated"}
+
+@app.post("/edges")
+async def create_edge(edge: EdgeCreate, db: aiosqlite.Connection = Depends(get_db)):
+    edge_id = uuid.uuid4().hex
+    await db.execute(
+        "INSERT INTO edges (id, workspace_id, source_id, target_id, label) VALUES (?, ?, ?, ?, ?)",
+        (edge_id, edge.workspace_id, edge.source_id, edge.target_id, edge.label),
+    )
+    await db.commit()
+    return {"id": edge_id, **edge.model_dump()}
