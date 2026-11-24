@@ -83,3 +83,50 @@ async def create_edge(edge: EdgeCreate, db: aiosqlite.Connection = Depends(get_d
     )
     await db.commit()
     return {"id": edge_id, **edge.model_dump()}
+
+class LogDecision(BaseModel):
+    decision: str  # "approved" or "rejected"
+
+@app.delete("/nodes/{node_id}")
+async def delete_node(node_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    # ON DELETE CASCADE in schema.sql automatically removes connected edges
+    await db.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+    await db.commit()
+    return {"status": "deleted", "id": node_id}
+
+@app.delete("/edges/{edge_id}")
+async def delete_edge(edge_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("DELETE FROM edges WHERE id = ?", (edge_id,))
+    await db.commit()
+    return {"status": "deleted", "id": edge_id}
+
+@app.get("/workspaces/{workspace_id}/logs")
+async def get_logs(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute(
+        """
+        SELECT l.*, a.name AS agent_name
+        FROM agent_logs l
+        JOIN agents a ON l.agent_id = a.id
+        WHERE l.workspace_id = ?
+        ORDER BY l.created_at DESC
+        LIMIT 50
+        """,
+        (workspace_id,),
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+@app.post("/logs/{log_id}/decision")
+async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute(
+        "UPDATE agent_logs SET approval_status = ? WHERE id = ?",
+        (body.decision, log_id),
+    )
+    await db.execute(
+        """
+        UPDATE agents SET status = 'idle'
+        WHERE id = (SELECT agent_id FROM agent_logs WHERE id = ?)
+        """,
+        (log_id,),
+    )
+    await db.commit()
+    return {"status": body.decision, "log_id": log_id}
