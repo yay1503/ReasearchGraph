@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import aiosqlite
 from db import get_db
 from agents import run_reader_and_clusterer
+from agents import run_reader_and_clusterer, request_experiment_approval, execute_experiment_with_debugger
 
 app = FastAPI(title="ResearchGraph API")
 
@@ -135,3 +136,21 @@ async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = 
 @app.post("/workspaces/{workspace_id}/agents/analyze")
 async def analyze_workspace(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
     return await run_reader_and_clusterer(workspace_id, db)
+
+@app.post("/workspaces/{workspace_id}/agents/experiment/request")
+async def request_experiment(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
+    return await request_experiment_approval(workspace_id, db)
+
+@app.post("/logs/{log_id}/decision")
+async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT workspace_id, agent_id FROM agent_logs WHERE id = ?", (log_id,))
+    log_row = await cursor.fetchone()
+
+    await db.execute("UPDATE agent_logs SET approval_status = ? WHERE id = ?", (body.decision, log_id))
+    await db.execute("UPDATE agents SET status = 'idle' WHERE id = ?", (log_row["agent_id"],))
+    await db.commit()
+
+    if body.decision == "approved" and log_row["agent_id"] == "agent_coder":
+        await execute_experiment_with_debugger(log_row["workspace_id"], db)
+
+    return {"status": body.decision, "log_id": log_id}
