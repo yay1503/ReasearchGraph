@@ -11,8 +11,8 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"  # Change this to match your `ollama list` name
 
 
-async def call_llama_json(prompt: str) -> dict:
-    async with httpx.AsyncClient(timeout=120.0) as client:
+async def call_llama_json(prompt: str, timeout: float = 120.0) -> dict:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             OLLAMA_URL,
             json={
@@ -179,6 +179,51 @@ print(json.dumps({
 """
 
 
+def _run_experiment_script(script: str) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(script)
+        script_path = Path(f.name)
+
+    try:
+        return subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    finally:
+        script_path.unlink(missing_ok=True)
+
+
+async def _record_experiment_failure(
+    workspace_id: str,
+    experiment_node_id: str,
+    detail: str,
+    db: aiosqlite.Connection,
+):
+    detail = detail.strip() or "The experiment did not produce valid metrics."
+    await db.execute(
+        """
+        INSERT INTO research_memory
+            (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution)
+        VALUES (?, ?, 'agent_coder', 'failure', ?, ?)
+        """,
+        (workspace_id, experiment_node_id, detail[:2000], "Experiment execution failed."),
+    )
+    await db.execute(
+        """
+        INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status)
+        VALUES (?, 'agent_coder', ?, ?, ?, 'auto')
+        """,
+        (workspace_id, experiment_node_id, "Reproduction failed", detail[:2000]),
+    )
+    await db.execute(
+        "UPDATE agents SET status = 'idle' WHERE id IN ('agent_coder', 'agent_debugger')"
+    )
+    await db.commit()
+
+
 async def request_experiment_approval(workspace_id: str, db: aiosqlite.Connection):
     await db.execute("UPDATE agents SET status = 'waiting_approval' WHERE id = 'agent_coder'")
     await db.execute(
@@ -220,12 +265,7 @@ async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Conn
     await db.commit()
 
     # 2. Run initial script (hits InvalidParameterError)
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-        f.write(BUGGY_EXPERIMENT_SCRIPT)
-        buggy_path = Path(f.name)
-
-    run1 = subprocess.run([sys.executable, str(buggy_path)], capture_output=True, text=True)
-    buggy_path.unlink(missing_ok=True)
+    run1 = _run_experiment_script(BUGGY_EXPERIMENT_SCRIPT)
 
     if run1.returncode != 0:
         err_line = run1.stderr.strip().splitlines()[-1] if run1.stderr else "Execution error"
@@ -234,14 +274,19 @@ async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Conn
         await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_debugger'")
         await db.commit()
 
+        used_fallback = False
         try:
             debug_res = await call_llama_json(
                 f"""A scikit-learn script failed with: {err_line}
-Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}}"""
+Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}}""",
+                timeout=10.0,
             )
-            fix_summary = debug_res.get("fix_summary", "Replaced deprecated max_features='auto' with max_features=None.")
+            fix_summary = debug_res.get("fix_summary")
+            if not isinstance(fix_summary, str) or not fix_summary.strip():
+                raise ValueError("Ollama returned no valid fix_summary")
         except Exception:
             fix_summary = "Replaced deprecated max_features='auto' with max_features=None."
+            used_fallback = True
 
         # Save failure + fix to research_memory & canvas
         fix_node_id = uuid.uuid4().hex
@@ -259,19 +304,33 @@ Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}
         )
         await db.execute(
             "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_debugger', ?, ?, ?, 'auto')",
-            (workspace_id, fix_node_id, "Caught & patched scikit-learn error", fix_summary),
+            (
+                workspace_id,
+                fix_node_id,
+                "Caught & patched scikit-learn error",
+                f"{fix_summary} (Ollama unavailable or returned invalid JSON; deterministic fix applied.)"
+                if used_fallback
+                else fix_summary,
+            ),
         )
         await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_debugger'")
         await db.commit()
 
     # 4. Run patched script
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-        f.write(FIXED_EXPERIMENT_SCRIPT)
-        fixed_path = Path(f.name)
-
-    run2 = subprocess.run([sys.executable, str(fixed_path)], capture_output=True, text=True)
-    fixed_path.unlink(missing_ok=True)
-    metrics = json.loads(run2.stdout.strip())
+    run2 = _run_experiment_script(FIXED_EXPERIMENT_SCRIPT)
+    if run2.returncode != 0:
+        detail = run2.stderr.strip() or run2.stdout.strip() or "Fixed experiment script exited unsuccessfully."
+        await _record_experiment_failure(workspace_id, exp_id, detail, db)
+        return {"status": "error", "detail": detail}
+    try:
+        metrics = json.loads(run2.stdout.strip())
+        required_metrics = {"baseline_auc", "baseline_f1", "smote_auc", "smote_f1"}
+        if not isinstance(metrics, dict) or not required_metrics.issubset(metrics):
+            raise ValueError("Experiment output is missing required metric values.")
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        detail = f"Could not parse experiment metrics: {exc}"
+        await _record_experiment_failure(workspace_id, exp_id, detail, db)
+        return {"status": "error", "detail": detail}
 
     # 5. Create Result node & log success
     res_node_id = uuid.uuid4().hex

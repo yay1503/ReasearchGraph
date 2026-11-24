@@ -185,13 +185,16 @@ export default function App() {
 
   // Approve or Reject a pending agent action (and refresh graph if experiment ran)
   const handleDecision = async (logId, decision) => {
-    await fetch(`${API}/logs/${logId}/decision`, {
+    const response = await fetch(`${API}/logs/${logId}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     });
+    if (!response.ok) {
+      throw new Error(`Could not ${decision} agent action (${response.status})`);
+    }
     await refreshGraph(workspaceId);
-    fetchAgentData();
+    await fetchAgentData();
   };
 
   // Workflow 1: Trigger Reader & Clusterer Agents via local Llama

@@ -1,11 +1,10 @@
 import json
 import uuid
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import aiosqlite
 from db import get_db
-from agents import run_reader_and_clusterer
 from agents import run_reader_and_clusterer, request_experiment_approval, execute_experiment_with_debugger
 
 app = FastAPI(title="ResearchGraph API")
@@ -117,22 +116,6 @@ async def get_logs(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)
     )
     return [dict(row) for row in await cursor.fetchall()]
 
-@app.post("/logs/{log_id}/decision")
-async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = Depends(get_db)):
-    await db.execute(
-        "UPDATE agent_logs SET approval_status = ? WHERE id = ?",
-        (body.decision, log_id),
-    )
-    await db.execute(
-        """
-        UPDATE agents SET status = 'idle'
-        WHERE id = (SELECT agent_id FROM agent_logs WHERE id = ?)
-        """,
-        (log_id,),
-    )
-    await db.commit()
-    return {"status": body.decision, "log_id": log_id}
-
 @app.post("/workspaces/{workspace_id}/agents/analyze")
 async def analyze_workspace(workspace_id: str, db: aiosqlite.Connection = Depends(get_db)):
     return await run_reader_and_clusterer(workspace_id, db)
@@ -145,6 +128,8 @@ async def request_experiment(workspace_id: str, db: aiosqlite.Connection = Depen
 async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute("SELECT workspace_id, agent_id FROM agent_logs WHERE id = ?", (log_id,))
     log_row = await cursor.fetchone()
+    if log_row is None:
+        raise HTTPException(status_code=404, detail="Agent log not found")
 
     await db.execute("UPDATE agent_logs SET approval_status = ? WHERE id = ?", (body.decision, log_id))
     await db.execute("UPDATE agents SET status = 'idle' WHERE id = ?", (log_row["agent_id"],))
