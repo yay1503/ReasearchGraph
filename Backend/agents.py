@@ -2,6 +2,10 @@ import json
 import uuid
 import httpx
 import aiosqlite
+import sys
+import subprocess
+import tempfile
+from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"  # Change this to match your `ollama list` name
@@ -107,3 +111,188 @@ Allowed node types: "dataset", "note".
     await db.commit()
 
     return {"status": "ok", "created_nodes": created_nodes}
+
+BUGGY_EXPERIMENT_SCRIPT = """
+import json
+import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import roc_auc_score, f1_score
+
+X, y = make_classification(
+    n_samples=768, n_features=8, weights=[0.65, 0.35], random_state=42
+)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+
+# Deliberate realistic bug: max_features='auto' was removed in modern scikit-learn
+clf = DecisionTreeClassifier(class_weight='balanced', max_features='auto', random_state=42)
+clf.fit(X_train, y_train)
+"""
+
+FIXED_EXPERIMENT_SCRIPT = """
+import json
+import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import NearestNeighbors
+from sklearn.metrics import roc_auc_score, f1_score
+
+def simple_smote(X, y, k=5):
+    X_min = X[y == 1]
+    n_needed = int(np.sum(y == 0) - np.sum(y == 1))
+    nn = NearestNeighbors(n_neighbors=k + 1).fit(X_min)
+    _, indices = nn.kneighbors(X_min)
+    rng = np.random.default_rng(42)
+    synth = []
+    for _ in range(n_needed):
+        i = rng.integers(0, len(X_min))
+        neighbor = X_min[indices[i, rng.integers(1, k + 1)]]
+        synth.append(X_min[i] + rng.random() * (neighbor - X_min[i]))
+    return np.vstack([X, np.array(synth)]), np.concatenate([y, np.ones(n_needed, dtype=int)])
+
+X, y = make_classification(
+    n_samples=768, n_features=8, weights=[0.65, 0.35], random_state=42
+)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+
+# 1. Baseline: Class-weighted Decision Tree
+base_clf = DecisionTreeClassifier(class_weight='balanced', max_features=None, random_state=42)
+base_clf.fit(X_train, y_train)
+base_auc = roc_auc_score(y_test, base_clf.predict_proba(X_test)[:, 1])
+base_f1 = f1_score(y_test, base_clf.predict(X_test))
+
+# 2. SMOTE + Decision Tree
+X_sm, y_sm = simple_smote(X_train, y_train, k=5)
+smote_clf = DecisionTreeClassifier(max_features=None, random_state=42)
+smote_clf.fit(X_sm, y_sm)
+smote_auc = roc_auc_score(y_test, smote_clf.predict_proba(X_test)[:, 1])
+smote_f1 = f1_score(y_test, smote_clf.predict(X_test))
+
+print(json.dumps({
+    "baseline_auc": round(float(base_auc), 3),
+    "baseline_f1": round(float(base_f1), 3),
+    "smote_auc": round(float(smote_auc), 3),
+    "smote_f1": round(float(smote_f1), 3)
+}))
+"""
+
+
+async def request_experiment_approval(workspace_id: str, db: aiosqlite.Connection):
+    await db.execute("UPDATE agents SET status = 'waiting_approval' WHERE id = 'agent_coder'")
+    await db.execute(
+        """
+        INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
+        VALUES (?, 'agent_coder', ?, ?, 'pending')
+        """,
+        (
+            workspace_id,
+            "Run SMOTE vs. Class-Weighted Decision Tree reproduction script",
+            "Requires researcher approval before executing Python code on local CPU.",
+        ),
+    )
+    await db.commit()
+    return {"status": "waiting_approval"}
+
+
+async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Connection):
+    # Find an anchor node (prefer dataset, fallback to any node)
+    cursor = await db.execute(
+        "SELECT id FROM nodes WHERE workspace_id = ? ORDER BY CASE WHEN type='dataset' THEN 0 ELSE 1 END LIMIT 1",
+        (workspace_id,),
+    )
+    anchor = await cursor.fetchone()
+    anchor_id = anchor["id"] if anchor else None
+
+    # 1. Create Experiment node & mark Experiment Agent as working
+    await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
+    exp_id = uuid.uuid4().hex
+    await db.execute(
+        "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'experiment', ?, ?, ?, ?)",
+        (exp_id, workspace_id, "SMOTE vs Weighted DT (k=5)", "Reproducing Chawla et al. (2002) baseline", 120, 440),
+    )
+    if anchor_id:
+        await db.execute(
+            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'reproduces', 1)",
+            (uuid.uuid4().hex, workspace_id, anchor_id, exp_id),
+        )
+    await db.commit()
+
+    # 2. Run initial script (hits InvalidParameterError)
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(BUGGY_EXPERIMENT_SCRIPT)
+        buggy_path = Path(f.name)
+
+    run1 = subprocess.run([sys.executable, str(buggy_path)], capture_output=True, text=True)
+    buggy_path.unlink(missing_ok=True)
+
+    if run1.returncode != 0:
+        err_line = run1.stderr.strip().splitlines()[-1] if run1.stderr else "Execution error"
+
+        # 3. Hand off to Debugger Agent + local Llama
+        await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_debugger'")
+        await db.commit()
+
+        try:
+            debug_res = await call_llama_json(
+                f"""A scikit-learn script failed with: {err_line}
+Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}}"""
+            )
+            fix_summary = debug_res.get("fix_summary", "Replaced deprecated max_features='auto' with max_features=None.")
+        except Exception:
+            fix_summary = "Replaced deprecated max_features='auto' with max_features=None."
+
+        # Save failure + fix to research_memory & canvas
+        fix_node_id = uuid.uuid4().hex
+        await db.execute(
+            "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'error_fix', ?, ?, ?, ?)",
+            (fix_node_id, workspace_id, "Fix: max_features='auto'", fix_summary, 420, 440),
+        )
+        await db.execute(
+            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'fixed_by', 1)",
+            (uuid.uuid4().hex, workspace_id, exp_id, fix_node_id),
+        )
+        await db.execute(
+            "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution) VALUES (?, ?, 'agent_debugger', 'fix', ?, ?)",
+            (workspace_id, exp_id, err_line, fix_summary),
+        )
+        await db.execute(
+            "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_debugger', ?, ?, ?, 'auto')",
+            (workspace_id, fix_node_id, "Caught & patched scikit-learn error", fix_summary),
+        )
+        await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_debugger'")
+        await db.commit()
+
+    # 4. Run patched script
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(FIXED_EXPERIMENT_SCRIPT)
+        fixed_path = Path(f.name)
+
+    run2 = subprocess.run([sys.executable, str(fixed_path)], capture_output=True, text=True)
+    fixed_path.unlink(missing_ok=True)
+    metrics = json.loads(run2.stdout.strip())
+
+    # 5. Create Result node & log success
+    res_node_id = uuid.uuid4().hex
+    res_title = f"AUC: SMOTE {metrics['smote_auc']} vs Base {metrics['baseline_auc']}"
+    await db.execute(
+        "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (?, ?, 'result', ?, ?, ?, ?, ?)",
+        (res_node_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), 120, 600),
+    )
+    await db.execute(
+        "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'produced', 1)",
+        (uuid.uuid4().hex, workspace_id, exp_id, res_node_id),
+    )
+    await db.execute(
+        "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, resolution) VALUES (?, ?, 'agent_coder', 'success', ?)",
+        (workspace_id, exp_id, res_title),
+    )
+    await db.execute(
+        "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_coder', ?, ?, ?, 'auto')",
+        (workspace_id, res_node_id, f"Reproduction complete: {res_title}", "Executed patched script on CPU and recorded metrics."),
+    )
+    await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_coder'")
+    await db.commit()
+
+    return {"status": "completed", "metrics": metrics}
