@@ -57,6 +57,25 @@ export default function App() {
     [deleteNode]
   );
 
+  // Helper to reload nodes and edges from SQLite
+  const refreshGraph = useCallback(
+    async (wsId) => {
+      if (!wsId) return;
+      const graphRes = await fetch(`${API}/workspaces/${wsId}/graph`);
+      const graph = await graphRes.json();
+      setNodes(graph.nodes.map(formatNode));
+      setEdges(
+        graph.edges.map((e) => ({
+          id: e.id,
+          source: e.source_id,
+          target: e.target_id,
+          label: e.label,
+        }))
+      );
+    },
+    [formatNode]
+  );
+
   // 1. Load or create workspace + graph
   useEffect(() => {
     async function init() {
@@ -72,22 +91,10 @@ export default function App() {
         localStorage.setItem('rg_workspace_id', wsId);
       }
       setWorkspaceId(wsId);
-
-      const graphRes = await fetch(`${API}/workspaces/${wsId}/graph`);
-      const graph = await graphRes.json();
-
-      setNodes(graph.nodes.map(formatNode));
-      setEdges(
-        graph.edges.map((e) => ({
-          id: e.id,
-          source: e.source_id,
-          target: e.target_id,
-          label: e.label,
-        }))
-      );
+      await refreshGraph(wsId);
     }
     init();
-  }, [formatNode]);
+  }, [refreshGraph]);
 
   // 2. Poll Agents & Live Activity Feed every 3 seconds
   const fetchAgentData = useCallback(async () => {
@@ -176,13 +183,14 @@ export default function App() {
     setNodes((nds) => [...nds, formatNode(saved)]);
   };
 
-  // Approve or Reject a pending agent action
+  // Approve or Reject a pending agent action (and refresh graph if experiment ran)
   const handleDecision = async (logId, decision) => {
     await fetch(`${API}/logs/${logId}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     });
+    await refreshGraph(workspaceId);
     fetchAgentData();
   };
 
@@ -199,22 +207,20 @@ export default function App() {
         alert(data.error);
         return;
       }
-
-      const graphRes = await fetch(`${API}/workspaces/${workspaceId}/graph`);
-      const graph = await graphRes.json();
-      setNodes(graph.nodes.map(formatNode));
-      setEdges(
-        graph.edges.map((e) => ({
-          id: e.id,
-          source: e.source_id,
-          target: e.target_id,
-          label: e.label,
-        }))
-      );
+      await refreshGraph(workspaceId);
       fetchAgentData();
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  // Workflow 2: Request approval to run SMOTE reproduction experiment
+  const requestExperiment = async () => {
+    if (!workspaceId) return;
+    await fetch(`${API}/workspaces/${workspaceId}/agents/experiment/request`, {
+      method: 'POST',
+    });
+    fetchAgentData();
   };
 
   return (
@@ -239,6 +245,19 @@ export default function App() {
           }}
         >
           {isAnalyzing ? 'Analyzing...' : '⚡ Analyze & Cluster'}
+        </button>
+        <button
+          onClick={requestExperiment}
+          style={{
+            background: '#059669',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          🧪 Run Reproduction
         </button>
       </div>
 
