@@ -41,6 +41,12 @@ export const NODE_TYPE_STYLES = {
     badgeBorder: '#E7E5E4',
     badgeText: '#44403C',
   },
+  what_if: {
+    accent: '#D97706',
+    badgeBg: '#FFFBEB',
+    badgeBorder: '#FDE68A',
+    badgeText: '#B45309',
+  },
 };
 
 export function getNodeTypeStyle(type) {

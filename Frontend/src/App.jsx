@@ -18,9 +18,11 @@ import {
   X,
   Check,
   Star,
+  AlertCircle,
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import ResearchNode from './components/ResearchNode';
+import ActionModal from './components/ActionModal';
 import { getNodeColor, getNodeTypeStyle } from './nodeStyles';
 
 const API = 'http://127.0.0.1:8000';
@@ -76,6 +78,15 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNode, setSelectedNode] = useState(null);
+  const [modalMode, setModalMode] = useState(null);
+  const [isModalSubmitting, setIsModalSubmitting] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = setTimeout(() => setToast(null), 4500);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // Delete a node from SQLite and remove it (+ its connected edges) from the canvas
   const deleteNode = useCallback(async (nodeId) => {
@@ -238,22 +249,49 @@ export default function App() {
     [workspaceId]
   );
 
-  // Add a new node
-  const addNode = async (type) => {
-    if (!workspaceId) return;
-    const title = prompt(`Enter ${type} title:`);
-    if (!title) return;
+  // Submit handler for ActionModal (Add Paper/Question/Note or Ask "What If")
+  const handleModalSubmit = async ({ title, content, question }) => {
+    if (!workspaceId || !modalMode) return;
+    setIsModalSubmitting(true);
+    try {
+      if (modalMode === 'what_if') {
+        const res = await fetch(`${API}/workspaces/${workspaceId}/agents/what-if`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+        if (data?.error) {
+          setToast({ message: data.error });
+          return;
+        }
+        await refreshGraph(workspaceId);
+        fetchAgentData();
+      } else {
+        const pos_x = Math.floor(Math.random() * 400) + 50;
+        const pos_y = Math.floor(Math.random() * 300) + 50;
 
-    const pos_x = Math.floor(Math.random() * 400) + 50;
-    const pos_y = Math.floor(Math.random() * 300) + 50;
-
-    const res = await fetch(`${API}/nodes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace_id: workspaceId, type, title, pos_x, pos_y }),
-    });
-    const saved = await res.json();
-    setNodes((nds) => [...nds, formatNode(saved)]);
+        const res = await fetch(`${API}/nodes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace_id: workspaceId,
+            type: modalMode,
+            title,
+            content: content || '',
+            pos_x,
+            pos_y,
+          }),
+        });
+        const saved = await res.json();
+        setNodes((nds) => [...nds, formatNode(saved)]);
+      }
+      setModalMode(null);
+    } catch {
+      setToast({ message: 'Request failed. Please ensure the backend server is running.' });
+    } finally {
+      setIsModalSubmitting(false);
+    }
   };
 
   // Approve or Reject a pending agent action (and refresh graph if experiment ran)
@@ -277,11 +315,13 @@ export default function App() {
       });
       const data = await res.json();
       if (data.error) {
-        alert(data.error);
+        setToast({ message: data.error });
         return;
       }
       await refreshGraph(workspaceId);
       fetchAgentData();
+    } catch {
+      setToast({ message: 'Analyze request failed. Please check the backend connection.' });
     } finally {
       setIsAnalyzing(false);
     }
@@ -293,24 +333,6 @@ export default function App() {
     await fetch(`${API}/workspaces/${workspaceId}/agents/experiment/request`, {
       method: 'POST',
     });
-    fetchAgentData();
-  };
-
-  // Workflow 3A: Ask "What If" and re-run
-  const runWhatIf = async () => {
-    if (!workspaceId) return;
-    const question = prompt(
-      'Ask a "What If" question:',
-      'What if we use Random Forest with k=3?'
-    );
-    if (!question) return;
-
-    await fetch(`${API}/workspaces/${workspaceId}/agents/what-if`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
-    });
-    await refreshGraph(workspaceId);
     fetchAgentData();
   };
 
@@ -382,7 +404,7 @@ export default function App() {
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={() => addNode('paper')}
+            onClick={() => setModalMode('paper')}
           >
             <FileText size={16} strokeWidth={1.75} />
             <span>+ Paper</span>
@@ -390,7 +412,7 @@ export default function App() {
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={() => addNode('question')}
+            onClick={() => setModalMode('question')}
           >
             <HelpCircle size={16} strokeWidth={1.75} />
             <span>+ Question</span>
@@ -398,7 +420,7 @@ export default function App() {
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={() => addNode('note')}
+            onClick={() => setModalMode('note')}
           >
             <StickyNote size={16} strokeWidth={1.75} />
             <span>+ Note</span>
@@ -449,7 +471,7 @@ export default function App() {
           <button
             type="button"
             className="rg-btn rg-btn-accent"
-            onClick={runWhatIf}
+            onClick={() => setModalMode('what_if')}
           >
             <GitBranch size={16} strokeWidth={1.75} />
             <span>Ask &ldquo;What If&rdquo;</span>
@@ -642,6 +664,35 @@ export default function App() {
           </section>
         </aside>
       </div>
+
+      {/* Custom Editorial Modal */}
+      {modalMode && (
+        <ActionModal
+          key={modalMode}
+          mode={modalMode}
+          onClose={() => setModalMode(null)}
+          onSubmit={handleModalSubmit}
+          isSubmitting={isModalSubmitting}
+        />
+      )}
+
+      {/* Subtle Bottom-Center Error Toast */}
+      {toast && (
+        <div className="rg-toast-wrap" role="status" aria-live="polite">
+          <div className="rg-toast">
+            <AlertCircle size={16} strokeWidth={2} className="rg-toast-icon" aria-hidden="true" />
+            <span className="rg-toast-msg">{toast.message}</span>
+            <button
+              type="button"
+              className="rg-inspector-close"
+              onClick={() => setToast(null)}
+              aria-label="Dismiss notification"
+            >
+              <X size={13} strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
