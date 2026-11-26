@@ -11,6 +11,34 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"  # Change this to match your `ollama list` name
 
 
+async def get_free_position(
+    workspace_id: str,
+    base_x: float,
+    base_y: float,
+    db: aiosqlite.Connection,
+) -> tuple[float, float]:
+    cursor = await db.execute(
+        "SELECT pos_x, pos_y FROM nodes WHERE workspace_id = ?",
+        (workspace_id,),
+    )
+    existing = [(float(row["pos_x"]), float(row["pos_y"])) for row in await cursor.fetchall()]
+
+    x = float(base_x)
+    y = float(base_y)
+    max_x = float(base_x) + 900.0
+
+    for _ in range(200):
+        overlaps = any(abs(x - ex) < 180.0 and abs(y - ey) < 120.0 for ex, ey in existing)
+        if not overlaps:
+            return x, y
+        x += 300.0
+        if x > max_x:
+            x = float(base_x)
+            y += 180.0
+
+    return x, y
+
+
 async def call_llama_json(prompt: str, timeout: float = 120.0) -> dict:
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
@@ -83,8 +111,7 @@ Allowed node types: "dataset", "note".
         if node_type not in ("dataset", "note"):
             node_type = "note"
 
-        pos_x = 120 + (i * 260)
-        pos_y = 280
+        pos_x, pos_y = await get_free_position(workspace_id, 120 + (i * 300), 280, db)
 
         await db.execute(
             "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -253,9 +280,10 @@ async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Conn
     # 1. Create Experiment node & mark Experiment Agent as working
     await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
     exp_id = uuid.uuid4().hex
+    exp_x, exp_y = await get_free_position(workspace_id, 120, 440, db)
     await db.execute(
         "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'experiment', ?, ?, ?, ?)",
-        (exp_id, workspace_id, "SMOTE vs Weighted DT (k=5)", "Reproducing Chawla et al. (2002) baseline", 120, 440),
+        (exp_id, workspace_id, "SMOTE vs Weighted DT (k=5)", "Reproducing Chawla et al. (2002) baseline", exp_x, exp_y),
     )
     if anchor_id:
         await db.execute(
@@ -290,9 +318,10 @@ Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}
 
         # Save failure + fix to research_memory & canvas
         fix_node_id = uuid.uuid4().hex
+        fix_x, fix_y = await get_free_position(workspace_id, exp_x + 300, exp_y, db)
         await db.execute(
             "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'error_fix', ?, ?, ?, ?)",
-            (fix_node_id, workspace_id, "Fix: max_features='auto'", fix_summary, 420, 440),
+            (fix_node_id, workspace_id, "Fix: max_features='auto'", fix_summary, fix_x, fix_y),
         )
         await db.execute(
             "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'fixed_by', 1)",
@@ -335,9 +364,10 @@ Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}
     # 5. Create Result node & log success
     res_node_id = uuid.uuid4().hex
     res_title = f"AUC: SMOTE {metrics['smote_auc']} vs Base {metrics['baseline_auc']}"
+    res_x, res_y = await get_free_position(workspace_id, exp_x, exp_y + 180, db)
     await db.execute(
         "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (?, ?, 'result', ?, ?, ?, ?, ?)",
-        (res_node_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), 120, 600),
+        (res_node_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
     )
     await db.execute(
         "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'produced', 1)",
@@ -434,9 +464,10 @@ Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbo
     # 3. Create the new branched Experiment node
     exp_id = uuid.uuid4().hex
     exp_title = f"What-If: {model_type.replace('_', ' ').title()} (k={k_neighbors})"
+    exp_x, exp_y = await get_free_position(workspace_id, 420, 620, db)
     await db.execute(
         "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'experiment', ?, ?, ?, ?)",
-        (exp_id, workspace_id, exp_title, question, 420, 600),
+        (exp_id, workspace_id, exp_title, question, exp_x, exp_y),
     )
     if prev_exp_id:
         await db.execute(
@@ -463,9 +494,10 @@ Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbo
     # 5. Create linked Result node & log to Research Memory + Activity Feed
     res_id = uuid.uuid4().hex
     res_title = f"AUC: {metrics['smote_auc']} | F1: {metrics['smote_f1']} ({model_type})"
+    res_x, res_y = await get_free_position(workspace_id, exp_x, exp_y + 180, db)
     await db.execute(
         "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (?, ?, 'result', ?, ?, ?, ?, ?)",
-        (res_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), 420, 760),
+        (res_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
     )
     await db.execute(
         "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'produced', 1)",

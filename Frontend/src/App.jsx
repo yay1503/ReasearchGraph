@@ -14,6 +14,7 @@ import {
   FlaskConical,
   GitBranch,
   Download,
+  LayoutGrid,
   Search,
   X,
   Check,
@@ -35,6 +36,13 @@ const EDGE_LABEL_PROPS = {
   labelBgBorderRadius: 999,
   labelStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, fill: '#44403C' },
 };
+
+const LAYOUT_GROUP_ORDER = [
+  ['paper', 'question'],
+  ['dataset', 'note'],
+  ['experiment', 'error_fix'],
+  ['result'],
+];
 
 function tryParseJsonObject(value) {
   if (!value) return null;
@@ -76,6 +84,11 @@ export default function App() {
   const [agents, setAgents] = useState([]);
   const [logs, setLogs] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isRunningExperiment, setIsRunningExperiment] = useState(false);
+  const [isRunningWhatIf, setIsRunningWhatIf] = useState(false);
+  const [pendingLogId, setPendingLogId] = useState(null);
+  const [isTidyingLayout, setIsTidyingLayout] = useState(false);
+  const [rfInstance, setRfInstance] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNode, setSelectedNode] = useState(null);
   const [modalMode, setModalMode] = useState(null);
@@ -251,8 +264,12 @@ export default function App() {
 
   // Submit handler for ActionModal (Add Paper/Question/Note or Ask "What If")
   const handleModalSubmit = async ({ title, content, question }) => {
-    if (!workspaceId || !modalMode) return;
+    if (!workspaceId || !modalMode || isModalSubmitting) return;
     setIsModalSubmitting(true);
+    if (modalMode === 'what_if') {
+      setIsRunningWhatIf(true);
+    }
+
     try {
       if (modalMode === 'what_if') {
         const res = await fetch(`${API}/workspaces/${workspaceId}/agents/what-if`, {
@@ -266,7 +283,7 @@ export default function App() {
           return;
         }
         await refreshGraph(workspaceId);
-        fetchAgentData();
+        await fetchAgentData();
       } else {
         const pos_x = Math.floor(Math.random() * 400) + 50;
         const pos_y = Math.floor(Math.random() * 300) + 50;
@@ -291,23 +308,32 @@ export default function App() {
       setToast({ message: 'Request failed. Please ensure the backend server is running.' });
     } finally {
       setIsModalSubmitting(false);
+      setIsRunningWhatIf(false);
     }
   };
 
   // Approve or Reject a pending agent action (and refresh graph if experiment ran)
   const handleDecision = async (logId, decision) => {
-    await fetch(`${API}/logs/${logId}/decision`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
-    });
-    await refreshGraph(workspaceId);
-    fetchAgentData();
+    if (pendingLogId !== null) return;
+    setPendingLogId(logId);
+    try {
+      await fetch(`${API}/logs/${logId}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      await refreshGraph(workspaceId);
+      await fetchAgentData();
+    } catch {
+      setToast({ message: 'Failed to submit decision. Please try again.' });
+    } finally {
+      setPendingLogId(null);
+    }
   };
 
   // Workflow 1: Trigger Reader & Clusterer Agents via local Llama
   const runAnalyze = async () => {
-    if (!workspaceId) return;
+    if (!workspaceId || isAnalyzing) return;
     setIsAnalyzing(true);
     try {
       const res = await fetch(`${API}/workspaces/${workspaceId}/agents/analyze`, {
@@ -319,7 +345,7 @@ export default function App() {
         return;
       }
       await refreshGraph(workspaceId);
-      fetchAgentData();
+      await fetchAgentData();
     } catch {
       setToast({ message: 'Analyze request failed. Please check the backend connection.' });
     } finally {
@@ -329,11 +355,78 @@ export default function App() {
 
   // Workflow 2: Request approval to run SMOTE reproduction experiment
   const requestExperiment = async () => {
-    if (!workspaceId) return;
-    await fetch(`${API}/workspaces/${workspaceId}/agents/experiment/request`, {
-      method: 'POST',
-    });
-    fetchAgentData();
+    if (!workspaceId || isRunningExperiment) return;
+    setIsRunningExperiment(true);
+    try {
+      await fetch(`${API}/workspaces/${workspaceId}/agents/experiment/request`, {
+        method: 'POST',
+      });
+      await fetchAgentData();
+    } catch {
+      setToast({ message: 'Failed to request reproduction experiment.' });
+    } finally {
+      setIsRunningExperiment(false);
+    }
+  };
+
+  // Tidy / Auto-Layout existing nodes into clean non-overlapping rows by workflow stage
+  const autoLayout = async () => {
+    if (nodes.length === 0 || isTidyingLayout) return;
+    setIsTidyingLayout(true);
+    try {
+      const buckets = [...LAYOUT_GROUP_ORDER.map(() => []), []];
+      nodes.forEach((node) => {
+        const t = node.data?.type || 'note';
+        const groupIdx = LAYOUT_GROUP_ORDER.findIndex((types) => types.includes(t));
+        buckets[groupIdx === -1 ? buckets.length - 1 : groupIdx].push(node);
+      });
+
+      const updates = [];
+      let currentY = 80;
+      const startX = 120;
+      const colStep = 300;
+      const rowStep = 180;
+      const maxCols = 4;
+
+      buckets.forEach((group) => {
+        if (group.length === 0) return;
+        group.forEach((node, idx) => {
+          const col = idx % maxCols;
+          const row = Math.floor(idx / maxCols);
+          updates.push({
+            id: node.id,
+            pos_x: startX + col * colStep,
+            pos_y: currentY + row * rowStep,
+          });
+        });
+        const rowsUsed = Math.ceil(group.length / maxCols);
+        currentY += rowsUsed * rowStep;
+      });
+
+      const posMap = new Map(updates.map((u) => [u.id, { x: u.pos_x, y: u.pos_y }]));
+      setNodes((nds) =>
+        nds.map((node) => {
+          const nextPos = posMap.get(node.id);
+          return nextPos ? { ...node, position: nextPos } : node;
+        })
+      );
+
+      await Promise.all(
+        updates.map((u) =>
+          fetch(`${API}/nodes/${u.id}/position`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pos_x: u.pos_x, pos_y: u.pos_y }),
+          })
+        )
+      );
+
+      rfInstance?.fitView({ padding: 0.2, duration: 250 });
+    } catch {
+      setToast({ message: 'Failed to save auto-layout positions.' });
+    } finally {
+      setIsTidyingLayout(false);
+    }
   };
 
   // Workflow 3B: Export workspace as Markdown report
@@ -464,19 +557,31 @@ export default function App() {
             type="button"
             className="rg-btn rg-btn-accent"
             onClick={requestExperiment}
+            disabled={isRunningExperiment}
           >
             <FlaskConical size={16} strokeWidth={1.75} />
-            <span>Run Reproduction</span>
+            <span>{isRunningExperiment ? 'Requesting...' : 'Run Reproduction'}</span>
           </button>
           <button
             type="button"
             className="rg-btn rg-btn-accent"
             onClick={() => setModalMode('what_if')}
+            disabled={isRunningWhatIf}
           >
             <GitBranch size={16} strokeWidth={1.75} />
-            <span>Ask &ldquo;What If&rdquo;</span>
+            <span>{isRunningWhatIf ? 'Running...' : 'Ask "What If"'}</span>
           </button>
           <span className="rg-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={autoLayout}
+            disabled={nodes.length === 0 || isTidyingLayout}
+            title="Arrange nodes in clean non-overlapping rows"
+          >
+            <LayoutGrid size={16} strokeWidth={1.75} />
+            <span>Auto-Layout</span>
+          </button>
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
@@ -497,6 +602,7 @@ export default function App() {
             nodeTypes={nodeTypes}
             nodes={displayedNodes}
             edges={edges}
+            onInit={setRfInstance}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodesDelete={onNodesDelete}
@@ -618,47 +724,53 @@ export default function App() {
               <div className="rg-empty-state">No agent activity yet.</div>
             ) : (
               <div className="rg-card-stack">
-                {logs.map((log) => (
-                  <div
-                    key={log.id}
-                    className={`rg-card ${log.approval_status === 'pending' ? 'rg-card-pending' : ''}`}
-                  >
-                    <div className="rg-log-header">
-                      <span className="rg-log-agent">{log.agent_name}</span>
-                      <span className={getLogPillClass(log.approval_status)}>
-                        {log.approval_status}
-                      </span>
-                    </div>
-                    <div className="rg-log-action">{log.action}</div>
-                    {log.reasoning && (
-                      <div className="rg-log-reasoning">
-                        Why: {log.reasoning}
+                {logs.map((log) => {
+                  const isDecisionBusy = pendingLogId !== null;
+                  const isThisLogPending = pendingLogId === log.id;
+                  return (
+                    <div
+                      key={log.id}
+                      className={`rg-card ${log.approval_status === 'pending' ? 'rg-card-pending' : ''}`}
+                    >
+                      <div className="rg-log-header">
+                        <span className="rg-log-agent">{log.agent_name}</span>
+                        <span className={getLogPillClass(log.approval_status)}>
+                          {log.approval_status}
+                        </span>
                       </div>
-                    )}
+                      <div className="rg-log-action">{log.action}</div>
+                      {log.reasoning && (
+                        <div className="rg-log-reasoning">
+                          Why: {log.reasoning}
+                        </div>
+                      )}
 
-                    {/* Approve / Reject buttons when pending */}
-                    {log.approval_status === 'pending' && (
-                      <div className="rg-decision-row">
-                        <button
-                          type="button"
-                          className="rg-decision-btn rg-decision-approve"
-                          onClick={() => handleDecision(log.id, 'approved')}
-                        >
-                          <Check size={14} strokeWidth={2} />
-                          <span>Approve</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="rg-decision-btn rg-decision-reject"
-                          onClick={() => handleDecision(log.id, 'rejected')}
-                        >
-                          <X size={14} strokeWidth={2} />
-                          <span>Reject</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      {/* Approve / Reject buttons when pending */}
+                      {log.approval_status === 'pending' && (
+                        <div className="rg-decision-row">
+                          <button
+                            type="button"
+                            className="rg-decision-btn rg-decision-approve"
+                            disabled={isDecisionBusy}
+                            onClick={() => handleDecision(log.id, 'approved')}
+                          >
+                            <Check size={14} strokeWidth={2} />
+                            <span>{isThisLogPending ? 'Running...' : 'Approve'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="rg-decision-btn rg-decision-reject"
+                            disabled={isDecisionBusy}
+                            onClick={() => handleDecision(log.id, 'rejected')}
+                          >
+                            <X size={14} strokeWidth={2} />
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -670,7 +782,9 @@ export default function App() {
         <ActionModal
           key={modalMode}
           mode={modalMode}
-          onClose={() => setModalMode(null)}
+          onClose={() => {
+            if (!isModalSubmitting) setModalMode(null);
+          }}
           onSubmit={handleModalSubmit}
           isSubmitting={isModalSubmitting}
         />

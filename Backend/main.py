@@ -133,12 +133,25 @@ async def request_experiment(workspace_id: str, db: aiosqlite.Connection = Depen
 
 @app.post("/logs/{log_id}/decision")
 async def decide_log(log_id: int, body: LogDecision, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT workspace_id, agent_id FROM agent_logs WHERE id = ?", (log_id,))
+    cursor = await db.execute(
+        "SELECT workspace_id, agent_id, approval_status FROM agent_logs WHERE id = ?",
+        (log_id,),
+    )
     log_row = await cursor.fetchone()
     if log_row is None:
         raise HTTPException(status_code=404, detail="Agent log not found")
 
-    await db.execute("UPDATE agent_logs SET approval_status = ? WHERE id = ?", (body.decision, log_id))
+    if log_row["approval_status"] != "pending":
+        return {"status": log_row["approval_status"], "log_id": log_id, "already_processed": True}
+
+    update_cursor = await db.execute(
+        "UPDATE agent_logs SET approval_status = ? WHERE id = ? AND approval_status = 'pending'",
+        (body.decision, log_id),
+    )
+    if update_cursor.rowcount == 0:
+        await db.rollback()
+        return {"status": "already_processed", "log_id": log_id, "already_processed": True}
+
     await db.execute("UPDATE agents SET status = 'idle' WHERE id = ?", (log_row["agent_id"],))
     await db.commit()
 
