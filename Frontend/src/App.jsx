@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -14,13 +14,14 @@ import {
   FlaskConical,
   GitBranch,
   Download,
+  Search,
   X,
   Check,
   Star,
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import ResearchNode from './components/ResearchNode';
-import { getNodeColor } from './nodeStyles';
+import { getNodeColor, getNodeTypeStyle } from './nodeStyles';
 
 const API = 'http://127.0.0.1:8000';
 
@@ -33,6 +34,39 @@ const EDGE_LABEL_PROPS = {
   labelStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, fill: '#44403C' },
 };
 
+function tryParseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return Object.keys(value).length > 0 ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function extractInspectorDetails(content, metadata) {
+  const parsedContent = tryParseJsonObject(content);
+  const parsedMetadata = tryParseJsonObject(metadata);
+
+  if (parsedContent) {
+    return { metrics: parsedContent, prose: '' };
+  }
+
+  return {
+    metrics: parsedMetadata,
+    prose: typeof content === 'string' ? content.trim() : '',
+  };
+}
+
 export default function App() {
   const [workspaceId, setWorkspaceId] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -40,12 +74,15 @@ export default function App() {
   const [agents, setAgents] = useState([]);
   const [logs, setLogs] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedNode, setSelectedNode] = useState(null);
 
   // Delete a node from SQLite and remove it (+ its connected edges) from the canvas
   const deleteNode = useCallback(async (nodeId) => {
     await fetch(`${API}/nodes/${nodeId}`, { method: 'DELETE' });
     setNodes((nds) => nds.filter((n) => n.id !== nodeId));
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+    setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
   }, []);
 
   // Helper to format a DB node into a custom ResearchNode
@@ -71,7 +108,11 @@ export default function App() {
       if (!wsId) return;
       const graphRes = await fetch(`${API}/workspaces/${wsId}/graph`);
       const graph = await graphRes.json();
-      setNodes(graph.nodes.map(formatNode));
+      const formattedNodes = graph.nodes.map(formatNode);
+      setNodes(formattedNodes);
+      setSelectedNode((prev) =>
+        prev ? formattedNodes.find((n) => n.id === prev.id) || null : null
+      );
       setEdges(
         graph.edges.map((e) => {
           const isAi = Boolean(e.is_ai_suggested);
@@ -143,6 +184,9 @@ export default function App() {
 
   // Keyboard Backspace/Delete support for nodes and edges
   const onNodesDelete = useCallback(async (deleted) => {
+    setSelectedNode((prev) =>
+      prev && deleted.some((node) => node.id === prev.id) ? null : prev
+    );
     for (const node of deleted) {
       await fetch(`${API}/nodes/${node.id}`, { method: 'DELETE' });
     }
@@ -284,6 +328,37 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const displayedNodes = useMemo(() => {
+    if (!normalizedQuery) return nodes;
+    return nodes.map((node) => {
+      const title = (node.data?.title || '').toLowerCase();
+      const type = (node.data?.type || '').toLowerCase();
+      const content = (node.data?.content || '').toLowerCase();
+      const matches =
+        title.includes(normalizedQuery) ||
+        type.includes(normalizedQuery) ||
+        content.includes(normalizedQuery);
+      return {
+        ...node,
+        className: matches ? 'rg-node-match' : undefined,
+        style: {
+          ...node.style,
+          opacity: matches ? 1 : 0.25,
+          transition: 'opacity 150ms ease',
+        },
+      };
+    });
+  }, [nodes, normalizedQuery]);
+
+  const inspectorStyle = selectedNode
+    ? getNodeTypeStyle(selectedNode.data?.type || 'note')
+    : null;
+  const inspectorDetails = selectedNode
+    ? extractInspectorDetails(selectedNode.data?.content, selectedNode.data?.metadata)
+    : null;
+
   const getStatusClass = (status) => {
     if (status === 'working') return 'rg-status-pill rg-status-working';
     if (status === 'waiting_approval') return 'rg-status-pill rg-status-waiting';
@@ -328,6 +403,29 @@ export default function App() {
             <StickyNote size={16} strokeWidth={1.75} />
             <span>+ Note</span>
           </button>
+          <span className="rg-divider" aria-hidden="true" />
+          <div className="rg-search-wrap">
+            <Search size={14} strokeWidth={1.75} className="rg-search-icon" aria-hidden="true" />
+            <input
+              type="text"
+              className="rg-search-input"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search nodes..."
+              aria-label="Search nodes"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="rg-search-clear"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X size={13} strokeWidth={2} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="rg-topbar-group">
@@ -375,7 +473,7 @@ export default function App() {
           <ReactFlow
             colorMode="light"
             nodeTypes={nodeTypes}
-            nodes={nodes}
+            nodes={displayedNodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -383,6 +481,8 @@ export default function App() {
             onEdgesDelete={onEdgesDelete}
             onNodeDragStop={onNodeDragStop}
             onConnect={onConnect}
+            onNodeClick={(_, node) => setSelectedNode(node)}
+            onPaneClick={() => setSelectedNode(null)}
             fitView
           >
             <Background color="#D6D3CD" gap={20} size={1} />
@@ -395,6 +495,66 @@ export default function App() {
               maskColor="rgba(247, 245, 240, 0.72)"
             />
           </ReactFlow>
+
+          {/* Click-to-Inspect Detail Card */}
+          {selectedNode && inspectorStyle && inspectorDetails && (
+            <div
+              className="rg-inspector-card"
+              role="region"
+              aria-label="Node Inspector"
+              style={{ borderLeft: `3px solid ${inspectorStyle.accent}` }}
+            >
+              <div className="rg-inspector-header">
+                <span
+                  className="rg-node-badge"
+                  style={{
+                    backgroundColor: inspectorStyle.badgeBg,
+                    borderColor: inspectorStyle.badgeBorder,
+                    color: inspectorStyle.badgeText,
+                  }}
+                >
+                  {selectedNode.data?.type || 'note'}
+                </span>
+                <button
+                  type="button"
+                  className="rg-inspector-close"
+                  onClick={() => setSelectedNode(null)}
+                  aria-label="Close detail card"
+                  title="Close"
+                >
+                  <X size={14} strokeWidth={2} />
+                </button>
+              </div>
+
+              <h3 className="rg-inspector-title">{selectedNode.data?.title}</h3>
+
+              <div className="rg-inspector-body">
+                {inspectorDetails.prose && (
+                  <p className="rg-inspector-prose">{inspectorDetails.prose}</p>
+                )}
+
+                {inspectorDetails.metrics && (
+                  <div
+                    className="rg-metric-grid"
+                    style={inspectorDetails.prose ? { marginTop: '10px' } : undefined}
+                  >
+                    {Object.entries(inspectorDetails.metrics).map(([key, val]) => (
+                      <div key={key} className="rg-metric-pill">
+                        <span className="rg-metric-key">{key}</span>
+                        <span className="rg-metric-val">
+                          {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!inspectorDetails.prose && !inspectorDetails.metrics && (
+                  <p className="rg-inspector-empty">No content or metrics recorded.</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right-Hand Agent Control Sidebar (320px) */}
