@@ -3,6 +3,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   addEdge,
 } from '@xyflow/react';
 import {
@@ -18,8 +19,19 @@ import {
   Star,
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
+import ResearchNode from './components/ResearchNode';
+import { getNodeColor } from './nodeStyles';
 
 const API = 'http://127.0.0.1:8000';
+
+const nodeTypes = { research: ResearchNode };
+
+const EDGE_LABEL_PROPS = {
+  labelBgStyle: { fill: '#FFFFFF', stroke: '#E5E0D8', strokeWidth: 1 },
+  labelBgPadding: [6, 4],
+  labelBgBorderRadius: 999,
+  labelStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, fill: '#44403C' },
+};
 
 export default function App() {
   const [workspaceId, setWorkspaceId] = useState(null);
@@ -36,32 +48,18 @@ export default function App() {
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
   }, []);
 
-  // Helper to format a DB node into a React Flow node with a delete button
+  // Helper to format a DB node into a custom ResearchNode
   const formatNode = useCallback(
     (n) => ({
       id: n.id,
+      type: 'research',
       position: { x: n.pos_x, y: n.pos_y },
       data: {
-        label: (
-          <div className="rg-node-inner">
-            <div className="rg-node-content">
-              <span className="rg-node-type">{n.type}</span>
-              <span className="rg-node-title">{n.title}</span>
-            </div>
-            <button
-              type="button"
-              className="rg-node-delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteNode(n.id);
-              }}
-              title="Delete node"
-              aria-label={`Delete ${n.title}`}
-            >
-              <X size={14} strokeWidth={1.75} />
-            </button>
-          </div>
-        ),
+        type: n.type,
+        title: n.title,
+        content: n.content,
+        metadata: n.metadata_json,
+        onDelete: deleteNode,
       },
     }),
     [deleteNode]
@@ -75,12 +73,22 @@ export default function App() {
       const graph = await graphRes.json();
       setNodes(graph.nodes.map(formatNode));
       setEdges(
-        graph.edges.map((e) => ({
-          id: e.id,
-          source: e.source_id,
-          target: e.target_id,
-          label: e.label,
-        }))
+        graph.edges.map((e) => {
+          const isAi = Boolean(e.is_ai_suggested);
+          return {
+            id: e.id,
+            source: e.source_id,
+            target: e.target_id,
+            label: e.label,
+            animated: isAi,
+            style: {
+              stroke: isAi ? '#78716C' : '#A8A29E',
+              strokeWidth: 1.5,
+              ...(isAi ? { strokeDasharray: '5 5' } : {}),
+            },
+            ...EDGE_LABEL_PROPS,
+          };
+        })
       );
     },
     [formatNode]
@@ -170,7 +178,18 @@ export default function App() {
         }),
       });
       const saved = await res.json();
-      setEdges((eds) => addEdge({ ...params, id: saved.id, label: saved.label }, eds));
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            id: saved.id,
+            label: saved.label,
+            style: { stroke: '#A8A29E', strokeWidth: 1.5 },
+            ...EDGE_LABEL_PROPS,
+          },
+          eds
+        )
+      );
     },
     [workspaceId]
   );
@@ -355,6 +374,7 @@ export default function App() {
         <div className="rg-canvas-wrap">
           <ReactFlow
             colorMode="light"
+            nodeTypes={nodeTypes}
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -365,8 +385,15 @@ export default function App() {
             onConnect={onConnect}
             fitView
           >
-            <Background color="#D6CFC3" gap={20} size={1.25} />
+            <Background color="#D6D3CD" gap={20} size={1} />
             <Controls />
+            <MiniMap
+              position="bottom-right"
+              pannable
+              zoomable
+              nodeColor={(node) => getNodeColor(node.data?.type)}
+              maskColor="rgba(247, 245, 240, 0.72)"
+            />
           </ReactFlow>
         </div>
 
