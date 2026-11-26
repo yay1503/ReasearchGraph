@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { getNodeTypeStyle } from '../nodeStyles';
 
 const MODAL_CONFIG = {
   paper: {
@@ -42,7 +41,6 @@ const WHAT_IF_SUGGESTIONS = [
 export default function ActionModal({ mode, onClose, onSubmit, isSubmitting }) {
   const isWhatIf = mode === 'what_if';
   const config = MODAL_CONFIG[mode] || MODAL_CONFIG.note;
-  const badgeStyle = getNodeTypeStyle(mode);
 
   const [primaryValue, setPrimaryValue] = useState(
     isWhatIf ? 'What if we use Random Forest with k=3?' : ''
@@ -97,14 +95,7 @@ export default function ActionModal({ mode, onClose, onSubmit, isSubmitting }) {
         aria-labelledby="rg-modal-title"
       >
         <div className="rg-modal-header">
-          <span
-            className="rg-node-badge"
-            style={{
-              backgroundColor: badgeStyle.badgeBg,
-              borderColor: badgeStyle.badgeBorder,
-              color: badgeStyle.badgeText,
-            }}
-          >
+          <span className="rg-node-badge" data-node-type={mode}>
             {config.badge}
           </span>
           <button

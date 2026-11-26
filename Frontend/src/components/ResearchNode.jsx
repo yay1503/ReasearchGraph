@@ -10,21 +10,17 @@ export default function ResearchNode({ id, data, selected }) {
   return (
     <div
       className={`rg-research-node ${selected ? 'is-selected' : ''}`}
+      data-node-type={nodeType}
       style={{
-        borderLeft: `3px solid ${typeStyle.accent}`,
+        borderLeft: `3px solid ${
+          nodeType === 'note' || !typeStyle ? 'var(--node-note-accent)' : typeStyle.accent
+        }`,
       }}
     >
       <Handle type="target" position={Position.Top} className="rg-handle" />
 
       <div className="rg-research-node-header">
-        <span
-          className="rg-node-badge"
-          style={{
-            backgroundColor: typeStyle.badgeBg,
-            borderColor: typeStyle.badgeBorder,
-            color: typeStyle.badgeText,
-          }}
-        >
+        <span className="rg-node-badge" data-node-type={nodeType}>
           {nodeType}
         </span>
 

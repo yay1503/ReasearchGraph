@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import {
   ReactFlow,
   Background,
@@ -16,6 +17,8 @@ import {
   Download,
   LayoutGrid,
   Search,
+  Moon,
+  Sun,
   X,
   Check,
   Star,
@@ -30,19 +33,20 @@ const API = 'http://127.0.0.1:8000';
 
 const nodeTypes = { research: ResearchNode };
 
-const EDGE_LABEL_PROPS = {
-  labelBgStyle: { fill: '#FFFFFF', stroke: '#E5E0D8', strokeWidth: 1 },
-  labelBgPadding: [6, 4],
-  labelBgBorderRadius: 999,
-  labelStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, fill: '#44403C' },
-};
-
 const LAYOUT_GROUP_ORDER = [
   ['paper', 'question'],
   ['dataset', 'note'],
   ['experiment', 'error_fix'],
   ['result'],
 ];
+
+function getInitialTheme() {
+  try {
+    return localStorage.getItem('rg_theme') === 'dark' ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
 
 function tryParseJsonObject(value) {
   if (!value) return null;
@@ -94,6 +98,55 @@ export default function App() {
   const [modalMode, setModalMode] = useState(null);
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [theme, setTheme] = useState(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem('rg_theme', theme);
+    } catch {
+      // ignore storage errors
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    const applyTheme = () => {
+      document.documentElement.setAttribute('data-theme', nextTheme);
+      try {
+        localStorage.setItem('rg_theme', nextTheme);
+      } catch {
+        // ignore storage errors
+      }
+      flushSync(() => {
+        setTheme(nextTheme);
+      });
+    };
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || prefersReducedMotion) {
+      applyTheme();
+      return;
+    }
+
+    const transition = document.startViewTransition(applyTheme);
+    transition.ready.then(() => {
+      const endRadius = Math.hypot(window.innerWidth, window.innerHeight);
+      document.documentElement.animate(
+        {
+          clipPath: [
+            'circle(0px at 0px 0px)',
+            `circle(${endRadius}px at 0px 0px)`,
+          ],
+        },
+        {
+          duration: 750,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          pseudoElement: '::view-transition-new(root)',
+        }
+      );
+    });
+  };
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -138,22 +191,13 @@ export default function App() {
         prev ? formattedNodes.find((n) => n.id === prev.id) || null : null
       );
       setEdges(
-        graph.edges.map((e) => {
-          const isAi = Boolean(e.is_ai_suggested);
-          return {
-            id: e.id,
-            source: e.source_id,
-            target: e.target_id,
-            label: e.label,
-            animated: isAi,
-            style: {
-              stroke: isAi ? '#78716C' : '#A8A29E',
-              strokeWidth: 1.5,
-              ...(isAi ? { strokeDasharray: '5 5' } : {}),
-            },
-            ...EDGE_LABEL_PROPS,
-          };
-        })
+        graph.edges.map((e) => ({
+          id: e.id,
+          source: e.source_id,
+          target: e.target_id,
+          label: e.label,
+          data: { isAiSuggested: Boolean(e.is_ai_suggested) },
+        }))
       );
     },
     [formatNode]
@@ -252,8 +296,7 @@ export default function App() {
             ...params,
             id: saved.id,
             label: saved.label,
-            style: { stroke: '#A8A29E', strokeWidth: 1.5 },
-            ...EDGE_LABEL_PROPS,
+            data: { isAiSuggested: false },
           },
           eds
         )
@@ -467,9 +510,45 @@ export default function App() {
     });
   }, [nodes, normalizedQuery]);
 
-  const inspectorStyle = selectedNode
-    ? getNodeTypeStyle(selectedNode.data?.type || 'note')
-    : null;
+  const displayedEdges = useMemo(() => {
+    const isDark = theme === 'dark';
+    const labelProps = {
+      labelBgStyle: {
+        fill: isDark ? '#121215' : '#FFFFFF',
+        stroke: isDark ? '#27272A' : '#E5E0D8',
+        strokeWidth: 1,
+      },
+      labelBgPadding: [6, 4],
+      labelBgBorderRadius: 999,
+      labelStyle: {
+        fontFamily: 'JetBrains Mono',
+        fontSize: 11,
+        fill: isDark ? '#D4D4D8' : '#44403C',
+      },
+    };
+    return edges.map((edge) => {
+      const isAi = Boolean(edge.data?.isAiSuggested);
+      return {
+        ...edge,
+        animated: isAi,
+        style: {
+          stroke: isAi
+            ? isDark
+              ? '#71717A'
+              : '#78716C'
+            : isDark
+              ? '#52525B'
+              : '#A8A29E',
+          strokeWidth: 1.5,
+          ...(isAi ? { strokeDasharray: '5 5' } : {}),
+        },
+        ...labelProps,
+      };
+    });
+  }, [edges, theme]);
+
+  const inspectorType = selectedNode?.data?.type || 'note';
+  const inspectorStyle = selectedNode ? getNodeTypeStyle(inspectorType) : null;
   const inspectorDetails = selectedNode
     ? extractInspectorDetails(selectedNode.data?.content, selectedNode.data?.metadata)
     : null;
@@ -590,6 +669,19 @@ export default function App() {
             <Download size={16} strokeWidth={1.75} />
             <span>Export MD</span>
           </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary rg-btn-icon"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? (
+              <Sun size={16} strokeWidth={1.75} />
+            ) : (
+              <Moon size={16} strokeWidth={1.75} />
+            )}
+          </button>
         </div>
       </header>
 
@@ -598,10 +690,10 @@ export default function App() {
         {/* Interactive Canvas */}
         <div className="rg-canvas-wrap">
           <ReactFlow
-            colorMode="light"
+            colorMode={theme}
             nodeTypes={nodeTypes}
             nodes={displayedNodes}
-            edges={edges}
+            edges={displayedEdges}
             onInit={setRfInstance}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -613,14 +705,18 @@ export default function App() {
             onPaneClick={() => setSelectedNode(null)}
             fitView
           >
-            <Background color="#D6D3CD" gap={20} size={1} />
+            <Background
+              color={theme === 'dark' ? '#27272A' : '#D6D3CD'}
+              gap={20}
+              size={1}
+            />
             <Controls />
             <MiniMap
               position="bottom-right"
               pannable
               zoomable
-              nodeColor={(node) => getNodeColor(node.data?.type)}
-              maskColor="rgba(247, 245, 240, 0.72)"
+              nodeColor={(node) => getNodeColor(node.data?.type, theme)}
+              maskColor={theme === 'dark' ? 'rgba(9, 9, 11, 0.72)' : 'rgba(247, 245, 240, 0.72)'}
             />
           </ReactFlow>
 
@@ -630,18 +726,15 @@ export default function App() {
               className="rg-inspector-card"
               role="region"
               aria-label="Node Inspector"
-              style={{ borderLeft: `3px solid ${inspectorStyle.accent}` }}
+              style={{
+                borderLeft: `3px solid ${
+                  inspectorType === 'note' ? 'var(--node-note-accent)' : inspectorStyle.accent
+                }`,
+              }}
             >
               <div className="rg-inspector-header">
-                <span
-                  className="rg-node-badge"
-                  style={{
-                    backgroundColor: inspectorStyle.badgeBg,
-                    borderColor: inspectorStyle.badgeBorder,
-                    color: inspectorStyle.badgeText,
-                  }}
-                >
-                  {selectedNode.data?.type || 'note'}
+                <span className="rg-node-badge" data-node-type={inspectorType}>
+                  {inspectorType}
                 </span>
                 <button
                   type="button"
