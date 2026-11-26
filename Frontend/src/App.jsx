@@ -5,6 +5,18 @@ import {
   Controls,
   addEdge,
 } from '@xyflow/react';
+import {
+  FileText,
+  HelpCircle,
+  StickyNote,
+  Sparkles,
+  FlaskConical,
+  GitBranch,
+  Download,
+  X,
+  Check,
+  Star,
+} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 
 const API = 'http://127.0.0.1:8000';
@@ -24,31 +36,29 @@ export default function App() {
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
   }, []);
 
-  // Helper to format a DB node into a React Flow node with a delete (×) button
+  // Helper to format a DB node into a React Flow node with a delete button
   const formatNode = useCallback(
     (n) => ({
       id: n.id,
       position: { x: n.pos_x, y: n.pos_y },
       data: {
         label: (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-            <span>[{n.type.toUpperCase()}] {n.title}</span>
+          <div className="rg-node-inner">
+            <div className="rg-node-content">
+              <span className="rg-node-type">{n.type}</span>
+              <span className="rg-node-title">{n.title}</span>
+            </div>
             <button
+              type="button"
+              className="rg-node-delete"
               onClick={(e) => {
                 e.stopPropagation();
                 deleteNode(n.id);
               }}
               title="Delete node"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#ef4444',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                padding: '0 4px',
-              }}
+              aria-label={`Delete ${n.title}`}
             >
-              ×
+              <X size={14} strokeWidth={1.75} />
             </button>
           </div>
         ),
@@ -255,75 +265,96 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const getStatusClass = (status) => {
+    if (status === 'working') return 'rg-status-pill rg-status-working';
+    if (status === 'waiting_approval') return 'rg-status-pill rg-status-waiting';
+    return 'rg-status-pill rg-status-idle';
+  };
+
+  const getLogPillClass = (approvalStatus) => {
+    if (approvalStatus === 'pending') return 'rg-log-pill rg-log-pill-pending';
+    if (approvalStatus === 'approved') return 'rg-log-pill rg-log-pill-approved';
+    if (approvalStatus === 'rejected') return 'rg-log-pill rg-log-pill-rejected';
+    return 'rg-log-pill rg-log-pill-default';
+  };
+
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#0b0f19', color: '#e2e8f0' }}>
+    <div className="rg-shell">
       {/* Top Bar */}
-      <div style={{ padding: '10px 16px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 }}>
-        <strong style={{ marginRight: '12px' }}>ResearchGraph</strong>
-        <button onClick={() => addNode('paper')}>+ Add Paper</button>
-        <button onClick={() => addNode('question')}>+ Add Question</button>
-        <button onClick={() => addNode('note')}>+ Add Note</button>
-        <button
-          onClick={runAnalyze}
-          disabled={isAnalyzing}
-          style={{
-            marginLeft: 'auto',
-            background: isAnalyzing ? '#475569' : '#2563eb',
-            color: '#fff',
-            border: 'none',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            cursor: isAnalyzing ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {isAnalyzing ? 'Analyzing...' : '⚡ Analyze & Cluster'}
-        </button>
-        <button
-          onClick={requestExperiment}
-          style={{
-            background: '#059669',
-            color: '#fff',
-            border: 'none',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          🧪 Run Reproduction
-        </button>
-        <button
-          onClick={runWhatIf}
-          style={{
-            background: '#7c3aed',
-            color: '#fff',
-            border: 'none',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          🤔 Ask "What If"
-        </button>
-        <button
-          onClick={exportWorkspace}
-          style={{
-            background: '#334155',
-            color: '#fff',
-            border: 'none',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          📥 Export MD
-        </button>
-      </div>
+      <header className="rg-topbar">
+        <div className="rg-topbar-group">
+          <span className="rg-brand">ResearchGraph</span>
+          <span className="rg-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={() => addNode('paper')}
+          >
+            <FileText size={16} strokeWidth={1.75} />
+            <span>+ Paper</span>
+          </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={() => addNode('question')}
+          >
+            <HelpCircle size={16} strokeWidth={1.75} />
+            <span>+ Question</span>
+          </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={() => addNode('note')}
+          >
+            <StickyNote size={16} strokeWidth={1.75} />
+            <span>+ Note</span>
+          </button>
+        </div>
+
+        <div className="rg-topbar-group">
+          <button
+            type="button"
+            className="rg-btn rg-btn-accent"
+            onClick={runAnalyze}
+            disabled={isAnalyzing}
+          >
+            <Sparkles size={16} strokeWidth={1.75} />
+            <span>{isAnalyzing ? 'Analyzing...' : 'Analyze & Cluster'}</span>
+          </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-accent"
+            onClick={requestExperiment}
+          >
+            <FlaskConical size={16} strokeWidth={1.75} />
+            <span>Run Reproduction</span>
+          </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-accent"
+            onClick={runWhatIf}
+          >
+            <GitBranch size={16} strokeWidth={1.75} />
+            <span>Ask &ldquo;What If&rdquo;</span>
+          </button>
+          <span className="rg-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={exportWorkspace}
+          >
+            <Download size={16} strokeWidth={1.75} />
+            <span>Export MD</span>
+          </button>
+        </div>
+      </header>
 
       {/* Main Content: Canvas + Agent Control Sidebar */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+      <div className="rg-main">
         {/* Interactive Canvas */}
-        <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
+        <div className="rg-canvas-wrap">
           <ReactFlow
+            colorMode="light"
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -334,84 +365,95 @@ export default function App() {
             onConnect={onConnect}
             fitView
           >
-            <Background />
+            <Background color="#D6CFC3" gap={20} size={1.25} />
             <Controls />
           </ReactFlow>
         </div>
 
         {/* Right-Hand Agent Control Sidebar (320px) */}
-        <div style={{ width: '320px', flexShrink: 0, background: '#0f172a', borderLeft: '1px solid #1e293b', display: 'flex', flexDirection: 'column', padding: '14px', overflowY: 'auto', gap: '16px' }}>
+        <aside className="rg-sidebar">
           {/* 1. Agent Roster */}
-          <div>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', color: '#94a3b8' }}>
-              Agent Team ({agents.length})
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <section aria-label="Agent Team">
+            <div className="rg-section-header">
+              <h2 className="rg-section-title">Agent Team</h2>
+              <span className="rg-section-count">{agents.length}</span>
+            </div>
+            <div className="rg-card-stack">
               {agents.map((a) => (
-                <div key={a.id} style={{ padding: '10px', background: '#1e293b', borderRadius: '6px', fontSize: '13px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                    <span>{a.name}</span>
-                    <span style={{ color: '#fbbf24' }}>★ {a.rating_score.toFixed(1)}</span>
+                <div key={a.id} className="rg-card">
+                  <div className="rg-agent-top">
+                    <span className="rg-agent-name">{a.name}</span>
+                    <span className="rg-rating-pill">
+                      <Star size={11} strokeWidth={2} fill="currentColor" aria-hidden="true" />
+                      <span>{a.rating_score.toFixed(1)}</span>
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '12px', color: '#94a3b8' }}>
+                  <div className="rg-agent-meta">
                     <span>Role: {a.role}</span>
-                    <span style={{
-                      color: a.status === 'working' ? '#38bdf8' : a.status === 'waiting_approval' ? '#f59e0b' : '#4ade80',
-                    }}>
-                      ● {a.status}
+                    <span className={getStatusClass(a.status)}>
+                      {a.status}
                     </span>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
           {/* 2. Live Activity Feed & Human-in-the-Loop Controls */}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', color: '#94a3b8' }}>
-              Live Activity Feed
-            </h3>
+          <section aria-label="Live Activity Feed" style={{ flex: 1 }}>
+            <div className="rg-section-header">
+              <h2 className="rg-section-title">Live Activity Feed</h2>
+              <span className="rg-section-count">{logs.length}</span>
+            </div>
             {logs.length === 0 ? (
-              <p style={{ fontSize: '12px', color: '#64748b' }}>No agent activity yet.</p>
+              <div className="rg-empty-state">No agent activity yet.</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div className="rg-card-stack">
                 {logs.map((log) => (
-                  <div key={log.id} style={{ padding: '10px', background: '#1e293b', borderRadius: '6px', fontSize: '12px', borderLeft: log.approval_status === 'pending' ? '3px solid #f59e0b' : '3px solid #334155' }}>
-                    <div style={{ fontWeight: 'bold', color: '#e2e8f0' }}>{log.agent_name}</div>
-                    <div style={{ marginTop: '4px' }}>{log.action}</div>
+                  <div
+                    key={log.id}
+                    className={`rg-card ${log.approval_status === 'pending' ? 'rg-card-pending' : ''}`}
+                  >
+                    <div className="rg-log-header">
+                      <span className="rg-log-agent">{log.agent_name}</span>
+                      <span className={getLogPillClass(log.approval_status)}>
+                        {log.approval_status}
+                      </span>
+                    </div>
+                    <div className="rg-log-action">{log.action}</div>
                     {log.reasoning && (
-                      <div style={{ marginTop: '4px', color: '#94a3b8', fontStyle: 'italic' }}>
+                      <div className="rg-log-reasoning">
                         Why: {log.reasoning}
                       </div>
                     )}
 
                     {/* Approve / Reject buttons when pending */}
-                    {log.approval_status === 'pending' ? (
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    {log.approval_status === 'pending' && (
+                      <div className="rg-decision-row">
                         <button
+                          type="button"
+                          className="rg-decision-btn rg-decision-approve"
                           onClick={() => handleDecision(log.id, 'approved')}
-                          style={{ flex: 1, background: '#16a34a', color: '#fff', border: 'none', padding: '5px', borderRadius: '4px', cursor: 'pointer' }}
                         >
-                          Approve
+                          <Check size={14} strokeWidth={2} />
+                          <span>Approve</span>
                         </button>
                         <button
+                          type="button"
+                          className="rg-decision-btn rg-decision-reject"
                           onClick={() => handleDecision(log.id, 'rejected')}
-                          style={{ flex: 1, background: '#dc2626', color: '#fff', border: 'none', padding: '5px', borderRadius: '4px', cursor: 'pointer' }}
                         >
-                          Reject
+                          <X size={14} strokeWidth={2} />
+                          <span>Reject</span>
                         </button>
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: '6px', fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
-                        Status: {log.approval_status}
                       </div>
                     )}
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        </div>
+          </section>
+        </aside>
       </div>
     </div>
   );
