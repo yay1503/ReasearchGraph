@@ -1,0 +1,8 @@
+- insert:
+    - id: mcp-playwright
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: playwright
+        transport: stdio
+        command: npx
+        args: ['-y', '@playwright/mcp@latest']
