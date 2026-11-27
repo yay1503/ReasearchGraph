@@ -91,7 +91,7 @@ export default function LandingPage() {
         // WorkspaceCanvas will create or reuse a workspace if needed
       }
 
-      navigate('/workspace');
+      navigate('/dashboard');
     } catch {
       setErrorMessage('Could not connect to the backend demo endpoint.');
     } finally {

@@ -20,6 +20,7 @@ import {
   Search,
   Moon,
   Sun,
+  ArrowLeft,
   X,
   Check,
   CheckCircle2,
@@ -601,6 +602,14 @@ export default function WorkspaceCanvas() {
         <div className="rg-topbar-group">
           <Link to="/" className="rg-brand rg-brand-link">
             ResearchGraph
+          </Link>
+          <Link
+            to="/dashboard"
+            className="rg-back-link"
+            title="Back to Workspaces"
+          >
+            <ArrowLeft size={14} strokeWidth={1.75} />
+            <span>Workspaces</span>
           </Link>
           <span className="rg-divider" aria-hidden="true" />
           <button

@@ -228,8 +228,8 @@ body,
   position: relative;
   display: flex;
   align-items: center;
-  width: 138px;
-  min-width: 100px;
+  width: 124px;
+  min-width: 92px;
   flex-shrink: 1;
 }
 
