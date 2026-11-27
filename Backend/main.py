@@ -12,7 +12,7 @@ from agents import (
     run_reader_and_clusterer,
     run_what_if_experiment,
 )
-from auth import router as auth_router
+from auth import get_current_user, get_optional_user, router as auth_router
 from db import get_db, init_db
 
 
@@ -55,16 +55,71 @@ async def list_agents(db=Depends(get_db)):
         return [dict(row) for row in cur.fetchall()]
 
 
-@app.post("/workspaces")
-async def create_workspace(ws: WorkspaceCreate, db=Depends(get_db)):
-    ws_id = uuid.uuid4().hex
+@app.get("/workspaces")
+async def list_workspaces(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO workspaces (id, name, description) VALUES (%s, %s, %s)",
-            (ws_id, ws.name, ws.description),
+            """
+            SELECT
+                w.id,
+                w.name,
+                w.description,
+                w.user_id,
+                w.created_at,
+                (SELECT COUNT(*) FROM nodes n WHERE n.workspace_id = w.id) AS node_count
+            FROM workspaces w
+            WHERE w.user_id = %s
+            ORDER BY w.created_at DESC
+            """,
+            (current_user["id"],),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+@app.post("/workspaces")
+async def create_workspace(
+    ws: WorkspaceCreate,
+    current_user: dict | None = Depends(get_optional_user),
+    db=Depends(get_db),
+):
+    ws_id = uuid.uuid4().hex
+    user_id = current_user["id"] if current_user else None
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO workspaces (id, name, description, user_id) VALUES (%s, %s, %s, %s)",
+            (ws_id, ws.name, ws.description, user_id),
         )
     db.commit()
-    return {"id": ws_id, **ws.model_dump()}
+    return {"id": ws_id, **ws.model_dump(), "user_id": user_id}
+
+
+@app.delete("/workspaces/{workspace_id}")
+async def delete_workspace(
+    workspace_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM workspaces WHERE id = %s AND user_id = %s",
+            (workspace_id, current_user["id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+
+        cur.execute("DELETE FROM research_memory WHERE workspace_id = %s", (workspace_id,))
+        cur.execute("DELETE FROM edges WHERE workspace_id = %s", (workspace_id,))
+        cur.execute("DELETE FROM agent_logs WHERE workspace_id = %s", (workspace_id,))
+        cur.execute("DELETE FROM nodes WHERE workspace_id = %s", (workspace_id,))
+        cur.execute(
+            "DELETE FROM workspaces WHERE id = %s AND user_id = %s",
+            (workspace_id, current_user["id"]),
+        )
+    db.commit()
+    return {"deleted": workspace_id}
 
 
 @app.get("/workspaces/{workspace_id}/graph")

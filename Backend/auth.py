@@ -21,19 +21,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def _extract_bearer_token(authorization: str | None = Header(default=None)) -> str:
+def _parse_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        return None
     parts = authorization.split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        return None
     return parts[1].strip()
 
 
-def get_current_user(
-    token: str = Depends(_extract_bearer_token),
-    db=Depends(get_db),
-) -> dict:
+def _extract_bearer_token(authorization: str | None = Header(default=None)) -> str:
+    token = _parse_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return token
+
+
+def _lookup_user_by_token(token: str, db) -> dict | None:
     with db.cursor() as cur:
         cur.execute(
             """
@@ -46,8 +50,28 @@ def get_current_user(
         )
         row = cur.fetchone()
     if row is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        return None
     return {"id": row["id"], "name": row["name"], "email": row["email"]}
+
+
+def get_current_user(
+    token: str = Depends(_extract_bearer_token),
+    db=Depends(get_db),
+) -> dict:
+    user = _lookup_user_by_token(token, db)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def get_optional_user(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+) -> dict | None:
+    token = _parse_bearer_token(authorization)
+    if not token:
+        return None
+    return _lookup_user_by_token(token, db)
 
 
 def _create_session(user_id: str, db) -> str:
