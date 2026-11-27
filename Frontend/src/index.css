@@ -2049,72 +2049,128 @@ body,
 /* Interactive Agent Mascots */
 .rg-mascots {
   display: block;
+  width: 100%;
+  max-width: 460px;
+  height: auto;
   overflow: visible;
   user-select: none;
   --pupil-x: 0px;
   --pupil-y: 0px;
   --face-x: 0px;
   --face-y: 0px;
-  --face-tilt: 0deg;
+  --body-lean: 0deg;
 }
 
-.rg-mascot-baseline {
-  stroke: var(--border-strong);
+.rg-auth-mascot-band .rg-mascots {
+  max-width: 240px;
 }
 
-.rg-mascot-amber .rg-mascot-body {
-  fill: #D97706;
-  stroke: rgba(28, 25, 23, 0.08);
-  stroke-width: 1;
+.rg-mascot-ground-shadow {
+  color: #1C1917;
 }
 
-.rg-mascot-center .rg-mascot-body {
-  fill: #1C1917;
-  stroke: #1C1917;
-  stroke-width: 1;
+[data-theme="dark"] .rg-mascot-ground-shadow {
+  color: #000000;
 }
 
-[data-theme="dark"] .rg-mascot-center .rg-mascot-body {
-  fill: #27272A;
-  stroke: #3F3F46;
+.rg-mascot-body-stroke {
+  stroke: rgba(28, 25, 23, 0.1);
   stroke-width: 1.5;
 }
 
-.rg-mascot-emerald .rg-mascot-body {
-  fill: #059669;
-  stroke: rgba(28, 25, 23, 0.08);
-  stroke-width: 1;
+[data-theme="dark"] .rg-mascot-body-stroke {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1.5;
 }
 
-.rg-mascot-creature {
+/* Staggered Idle Breathing */
+@keyframes rgMascotBreathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.rg-breathe-0 {
+  animation: rgMascotBreathe 4.2s ease-in-out infinite;
+}
+
+.rg-breathe-1 {
+  animation: rgMascotBreathe 3.6s ease-in-out infinite 0.5s;
+}
+
+.rg-breathe-2 {
+  animation: rgMascotBreathe 4.5s ease-in-out infinite 1s;
+}
+
+/* Mood Bounce / Slump */
+.rg-mascot-mood-wrap {
   transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.rg-mascot-creature-1 {
-  transition-delay: 40ms;
+.rg-mascots.mood-happy .rg-mascot-mood-wrap {
+  transform: translateY(-8px);
 }
 
-.rg-mascot-creature-2 {
-  transition-delay: 80ms;
+.rg-mascots.mood-sad .rg-mascot-mood-wrap {
+  transform: translateY(5px);
 }
 
-.rg-mascots.mood-happy .rg-mascot-creature {
-  transform: translateY(-4px);
+/* Body Cursor Lean */
+.rg-mascot-lean {
+  transform: rotate(calc(var(--base-tilt, 0deg) + var(--body-lean)));
+  transition: transform 180ms ease-out;
 }
 
-.rg-mascots.mood-sad .rg-mascot-creature {
-  transform: translateY(3px);
+.rg-mascots.mood-shy .rg-mascot-lean {
+  transform: rotate(calc(var(--base-tilt, 0deg) - 2.5deg));
 }
 
+/* Face Group Shift */
 .rg-mascot-face {
-  transform: translate(var(--face-x), var(--face-y)) rotate(var(--face-tilt));
-  transition: transform 120ms ease-out;
+  transform: translate(var(--face-x), var(--face-y));
+  transition: transform 140ms ease-out;
 }
 
 .rg-mascots.mood-shy .rg-mascot-face {
-  transform: translate(-2px, -1px) rotate(-2deg);
+  transform: translate(-5px, -2px);
 }
 
+/* Cheek Blush */
+.rg-mascot-blush {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.rg-mascots.mood-happy .rg-mascot-blush {
+  opacity: 0.45;
+}
+
+/* Dynamic Eyebrows */
+.rg-mascot-brow {
+  transition: transform 180ms ease-out;
+}
+
+.rg-mascots.mood-happy .rg-mascot-brow {
+  transform: translateY(-4px);
+}
+
+.rg-mascots.mood-sad .rg-brow-left {
+  transform: translateY(1px) rotate(-18deg);
+}
+
+.rg-mascots.mood-sad .rg-brow-right {
+  transform: translateY(1px) rotate(18deg);
+}
+
+.rg-mascots.mood-shy .rg-mascot-brow {
+  transform: translateY(-2px);
+}
+
+/* Alive Eyes & Glossy Pupils */
 .rg-mascot-eye-scale {
   transition: transform 160ms ease-out;
 }
@@ -2124,23 +2180,32 @@ body,
 }
 
 .rg-mascots.mood-sad .rg-mascot-eye-scale {
-  transform: scaleY(0.86);
+  transform: scaleY(0.88);
 }
 
-.rg-mascot-pupil {
+.rg-mascot-pupil-wrap {
   transform: translate(var(--pupil-x), var(--pupil-y));
   transition: transform 120ms ease-out;
 }
 
-.rg-mascots.mood-shy .rg-mascot-pupil {
-  transform: translate(-3.6px, -3.2px);
+.rg-mascots.mood-sad .rg-mascot-pupil-wrap {
+  transform: translate(calc(var(--pupil-x) * 0.35), 4.5px);
+}
+
+.rg-mascots.mood-shy .rg-mascot-pupil-wrap {
+  transform: translate(-7.2px, -6.4px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rg-mascot-creature,
+  .rg-mascot-breathe,
+  .rg-mascot-mood-wrap,
+  .rg-mascot-lean,
   .rg-mascot-face,
+  .rg-mascot-blush,
+  .rg-mascot-brow,
   .rg-mascot-eye-scale,
-  .rg-mascot-pupil {
+  .rg-mascot-pupil-wrap {
+    animation: none;
     transition: none;
   }
 }
