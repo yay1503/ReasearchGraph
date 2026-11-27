@@ -2,10 +2,50 @@ import { Handle, Position } from '@xyflow/react';
 import { X } from 'lucide-react';
 import { getNodeTypeStyle } from '../nodeStyles';
 
+function formatNodePreview(content) {
+  if (typeof content !== 'string') return null;
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if ('smote_auc' in parsed && 'baseline_auc' in parsed) {
+          return {
+            text: `SMOTE ${parsed.smote_auc} · Base ${parsed.baseline_auc}`,
+            isMetric: true,
+          };
+        }
+        if ('smote_auc' in parsed && 'smote_f1' in parsed) {
+          return {
+            text: `AUC ${parsed.smote_auc} · F1 ${parsed.smote_f1}`,
+            isMetric: true,
+          };
+        }
+        const entries = Object.entries(parsed).slice(0, 2);
+        if (entries.length > 0) {
+          return {
+            text: entries
+              .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+              .join(' · '),
+            isMetric: true,
+          };
+        }
+        return null;
+      }
+    } catch {
+      // Fall through to prose preview
+    }
+  }
+
+  return { text: trimmed, isMetric: false };
+}
+
 export default function ResearchNode({ id, data, selected }) {
   const nodeType = data?.type || 'note';
   const typeStyle = getNodeTypeStyle(nodeType);
-  const preview = typeof data?.content === 'string' ? data.content.trim() : '';
+  const preview = formatNodePreview(data?.content);
 
   return (
     <div
@@ -41,8 +81,11 @@ export default function ResearchNode({ id, data, selected }) {
       <div className="rg-research-node-title">{data?.title}</div>
 
       {preview && (
-        <div className="rg-research-node-preview" title={preview}>
-          {preview}
+        <div
+          className={`rg-research-node-preview ${preview.isMetric ? 'is-metric' : ''}`}
+          title={preview.text}
+        >
+          {preview.text}
         </div>
       )}
 

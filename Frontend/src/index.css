@@ -178,13 +178,13 @@ body,
 /* Top Bar */
 .rg-topbar {
   height: 56px;
-  padding: 0 14px;
+  padding: 0 12px;
   background-color: var(--bg-canvas);
   border-bottom: 1px solid var(--border-paper);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
   z-index: 10;
 }
@@ -192,14 +192,14 @@ body,
 .rg-topbar-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .rg-brand {
   font-family: var(--font-serif);
   font-weight: 600;
-  font-size: 20px;
+  font-size: 19px;
   letter-spacing: -0.02em;
   color: var(--text-ink);
   line-height: 1;
@@ -220,8 +220,8 @@ body,
   position: relative;
   display: flex;
   align-items: center;
-  width: 156px;
-  min-width: 112px;
+  width: 138px;
+  min-width: 100px;
   flex-shrink: 1;
 }
 
@@ -291,12 +291,12 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 10px;
+  gap: 5px;
+  height: 32px;
+  padding: 0 9px;
   border-radius: 6px;
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -305,7 +305,7 @@ body,
 }
 
 .rg-btn-icon {
-  width: 34px;
+  width: 32px;
   padding: 0;
   flex-shrink: 0;
 }
@@ -377,8 +377,83 @@ body,
   border-left: 1px solid var(--border-paper);
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  gap: 20px;
+  overflow: hidden;
+}
+
+.rg-sidebar-tabs-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-paper);
+  flex-shrink: 0;
+  background-color: var(--bg-canvas);
+}
+
+.rg-segmented-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-paper);
+  border-radius: 8px;
+}
+
+.rg-tab-btn {
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.rg-tab-btn:hover:not(.is-active) {
+  color: var(--text-ink);
+}
+
+.rg-tab-btn.is-active {
+  background-color: var(--bg-surface);
+  color: var(--text-ink);
+  box-shadow: var(--shadow-card);
+}
+
+.rg-tab-btn:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 1px;
+}
+
+.rg-tab-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rg-tab-btn.is-active .rg-tab-count {
+  color: var(--text-secondary);
+}
+
+.rg-pending-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-amber);
+  flex-shrink: 0;
+}
+
+.rg-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px 16px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
@@ -386,20 +461,20 @@ body,
 }
 
 /* Thin 6px Custom Scrollbar */
-.rg-sidebar::-webkit-scrollbar {
+.rg-sidebar-scroll::-webkit-scrollbar {
   width: 6px;
 }
 
-.rg-sidebar::-webkit-scrollbar-track {
+.rg-sidebar-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.rg-sidebar::-webkit-scrollbar-thumb {
+.rg-sidebar-scroll::-webkit-scrollbar-thumb {
   background-color: var(--border-strong);
   border-radius: 999px;
 }
 
-.rg-sidebar::-webkit-scrollbar-thumb:hover {
+.rg-sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background-color: var(--text-muted);
 }
 
@@ -889,6 +964,13 @@ body,
   text-overflow: ellipsis;
 }
 
+.rg-research-node-preview.is-metric {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
 .rg-node-delete {
   flex-shrink: 0;
   width: 20px;
@@ -1229,9 +1311,17 @@ body,
   font-size: 13px;
 }
 
+.rg-toast.is-success {
+  border-color: var(--log-approved-border);
+}
+
 .rg-toast-icon {
   flex-shrink: 0;
   color: var(--status-danger);
+}
+
+.rg-toast.is-success .rg-toast-icon {
+  color: var(--status-idle);
 }
 
 .rg-toast-msg {

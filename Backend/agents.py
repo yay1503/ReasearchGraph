@@ -1,11 +1,11 @@
 import json
-import uuid
-import httpx
-import aiosqlite
-import sys
 import subprocess
+import sys
 import tempfile
+import uuid
 from pathlib import Path
+
+import httpx
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"  # Change this to match your `ollama list` name
@@ -15,13 +15,14 @@ async def get_free_position(
     workspace_id: str,
     base_x: float,
     base_y: float,
-    db: aiosqlite.Connection,
+    db,
 ) -> tuple[float, float]:
-    cursor = await db.execute(
-        "SELECT pos_x, pos_y FROM nodes WHERE workspace_id = ?",
-        (workspace_id,),
-    )
-    existing = [(float(row["pos_x"]), float(row["pos_y"])) for row in await cursor.fetchall()]
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT pos_x, pos_y FROM nodes WHERE workspace_id = %s",
+            (workspace_id,),
+        )
+        existing = [(float(row["pos_x"]), float(row["pos_y"])) for row in cur.fetchall()]
 
     x = float(base_x)
     y = float(base_y)
@@ -55,19 +56,21 @@ async def call_llama_json(prompt: str, timeout: float = 120.0) -> dict:
         return json.loads(raw_text)
 
 
-async def run_reader_and_clusterer(workspace_id: str, db: aiosqlite.Connection):
+async def run_reader_and_clusterer(workspace_id: str, db):
     # 1. Fetch existing paper and question nodes
-    cursor = await db.execute(
-        "SELECT id, type, title, content FROM nodes WHERE workspace_id = ? AND type IN ('paper', 'question')",
-        (workspace_id,),
-    )
-    sources = [dict(row) for row in await cursor.fetchall()]
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id, type, title, content FROM nodes WHERE workspace_id = %s AND type IN ('paper', 'question')",
+            (workspace_id,),
+        )
+        sources = [dict(row) for row in cur.fetchall()]
     if not sources:
         return {"error": "Add at least one Paper or Question node first."}
 
     # 2. Mark Reader Agent as working
-    await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_reader'")
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_reader'")
+    db.commit()
 
     source_text = "\n".join([f"- [{s['type'].upper()}] {s['title']} (id: {s['id']})" for s in sources])
     prompt = f"""
@@ -95,14 +98,18 @@ Allowed node types: "dataset", "note".
     try:
         result = await call_llama_json(prompt)
     except Exception as e:
-        await db.execute("UPDATE agents SET status = 'idle' WHERE id = 'agent_reader'")
-        await db.commit()
+        with db.cursor() as cur:
+            cur.execute("UPDATE agents SET status = 'idle' WHERE id = 'agent_reader'")
+        db.commit()
         return {"error": f"Ollama call failed: {str(e)}"}
 
     # 3. Switch to Clusterer Agent to insert nodes & suggested edges
-    await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1 WHERE id = 'agent_reader'")
-    await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_clusterer'")
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1 WHERE id = 'agent_reader'"
+        )
+        cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_clusterer'")
+    db.commit()
 
     created_nodes = []
     for i, item in enumerate(result.get("new_nodes", [])):
@@ -113,31 +120,38 @@ Allowed node types: "dataset", "note".
 
         pos_x, pos_y = await get_free_position(workspace_id, 120 + (i * 300), 280, db)
 
-        await db.execute(
-            "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (node_id, workspace_id, node_type, item.get("title", "Untitled"), item.get("content", ""), pos_x, pos_y),
-        )
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (node_id, workspace_id, node_type, item.get("title", "Untitled"), item.get("content", ""), pos_x, pos_y),
+            )
 
-        target_id = item.get("connect_to_id") or sources[0]["id"]
-        edge_id = uuid.uuid4().hex
-        await db.execute(
-            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested, status) VALUES (?, ?, ?, ?, ?, 1, 'accepted')",
-            (edge_id, workspace_id, target_id, node_id, item.get("edge_label", "extracted_from")),
-        )
+            target_id = item.get("connect_to_id") or sources[0]["id"]
+            edge_id = uuid.uuid4().hex
+            cur.execute(
+                "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested, status) VALUES (%s, %s, %s, %s, %s, TRUE, 'accepted')",
+                (edge_id, workspace_id, target_id, node_id, item.get("edge_label", "extracted_from")),
+            )
         created_nodes.append(node_id)
 
     # 4. Log activity for transparency and reset Clusterer Agent
-    await db.execute(
-        """
-        INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
-        VALUES (?, 'agent_reader', ?, ?, 'auto')
-        """,
-        (workspace_id, f"Analyzed {len(sources)} source(s) and extracted {len(created_nodes)} new nodes.", result.get("reasoning", "")),
-    )
-    await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.1 WHERE id = 'agent_clusterer'")
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
+            VALUES (%s, 'agent_reader', %s, %s, 'auto')
+            RETURNING id
+            """,
+            (workspace_id, f"Analyzed {len(sources)} source(s) and extracted {len(created_nodes)} new nodes.", result.get("reasoning", "")),
+        )
+        cur.fetchone()
+        cur.execute(
+            "UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.1 WHERE id = 'agent_clusterer'"
+        )
+    db.commit()
 
     return {"status": "ok", "created_nodes": created_nodes}
+
 
 BUGGY_EXPERIMENT_SCRIPT = """
 import json
@@ -227,70 +241,81 @@ async def _record_experiment_failure(
     workspace_id: str,
     experiment_node_id: str,
     detail: str,
-    db: aiosqlite.Connection,
+    db,
 ):
     detail = detail.strip() or "The experiment did not produce valid metrics."
-    await db.execute(
-        """
-        INSERT INTO research_memory
-            (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution)
-        VALUES (?, ?, 'agent_coder', 'failure', ?, ?)
-        """,
-        (workspace_id, experiment_node_id, detail[:2000], "Experiment execution failed."),
-    )
-    await db.execute(
-        """
-        INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status)
-        VALUES (?, 'agent_coder', ?, ?, ?, 'auto')
-        """,
-        (workspace_id, experiment_node_id, "Reproduction failed", detail[:2000]),
-    )
-    await db.execute(
-        "UPDATE agents SET status = 'idle' WHERE id IN ('agent_coder', 'agent_debugger')"
-    )
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO research_memory
+                (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution)
+            VALUES (%s, %s, 'agent_coder', 'failure', %s, %s)
+            RETURNING id
+            """,
+            (workspace_id, experiment_node_id, detail[:2000], "Experiment execution failed."),
+        )
+        cur.fetchone()
+        cur.execute(
+            """
+            INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status)
+            VALUES (%s, 'agent_coder', %s, %s, %s, 'auto')
+            RETURNING id
+            """,
+            (workspace_id, experiment_node_id, "Reproduction failed", detail[:2000]),
+        )
+        cur.fetchone()
+        cur.execute(
+            "UPDATE agents SET status = 'idle' WHERE id IN ('agent_coder', 'agent_debugger')"
+        )
+    db.commit()
 
 
-async def request_experiment_approval(workspace_id: str, db: aiosqlite.Connection):
-    await db.execute("UPDATE agents SET status = 'waiting_approval' WHERE id = 'agent_coder'")
-    await db.execute(
-        """
-        INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
-        VALUES (?, 'agent_coder', ?, ?, 'pending')
-        """,
-        (
-            workspace_id,
-            "Run SMOTE vs. Class-Weighted Decision Tree reproduction script",
-            "Requires researcher approval before executing Python code on local CPU.",
-        ),
-    )
-    await db.commit()
-    return {"status": "waiting_approval"}
+async def request_experiment_approval(workspace_id: str, db):
+    with db.cursor() as cur:
+        cur.execute("UPDATE agents SET status = 'waiting_approval' WHERE id = 'agent_coder'")
+        cur.execute(
+            """
+            INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
+            VALUES (%s, 'agent_coder', %s, %s, 'pending')
+            RETURNING id
+            """,
+            (
+                workspace_id,
+                "Run SMOTE vs. Class-Weighted Decision Tree reproduction script",
+                "Requires researcher approval before executing Python code on local CPU.",
+            ),
+        )
+        log_id = cur.fetchone()["id"]
+    db.commit()
+    return {"status": "waiting_approval", "log_id": log_id}
 
 
-async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Connection):
+async def execute_experiment_with_debugger(workspace_id: str, db):
     # Find an anchor node (prefer dataset, fallback to any node)
-    cursor = await db.execute(
-        "SELECT id FROM nodes WHERE workspace_id = ? ORDER BY CASE WHEN type='dataset' THEN 0 ELSE 1 END LIMIT 1",
-        (workspace_id,),
-    )
-    anchor = await cursor.fetchone()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM nodes WHERE workspace_id = %s ORDER BY CASE WHEN type='dataset' THEN 0 ELSE 1 END LIMIT 1",
+            (workspace_id,),
+        )
+        anchor = cur.fetchone()
     anchor_id = anchor["id"] if anchor else None
 
     # 1. Create Experiment node & mark Experiment Agent as working
-    await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
+    with db.cursor() as cur:
+        cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
     exp_id = uuid.uuid4().hex
     exp_x, exp_y = await get_free_position(workspace_id, 120, 440, db)
-    await db.execute(
-        "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'experiment', ?, ?, ?, ?)",
-        (exp_id, workspace_id, "SMOTE vs Weighted DT (k=5)", "Reproducing Chawla et al. (2002) baseline", exp_x, exp_y),
-    )
-    if anchor_id:
-        await db.execute(
-            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'reproduces', 1)",
-            (uuid.uuid4().hex, workspace_id, anchor_id, exp_id),
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (%s, %s, 'experiment', %s, %s, %s, %s)",
+            (exp_id, workspace_id, "SMOTE vs Weighted DT (k=5)", "Reproducing Chawla et al. (2002) baseline", exp_x, exp_y),
         )
-    await db.commit()
+        if anchor_id:
+            cur.execute(
+                "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (%s, %s, %s, %s, 'reproduces', TRUE)",
+                (uuid.uuid4().hex, workspace_id, anchor_id, exp_id),
+            )
+    db.commit()
 
     # 2. Run initial script (hits InvalidParameterError)
     run1 = _run_experiment_script(BUGGY_EXPERIMENT_SCRIPT)
@@ -299,8 +324,9 @@ async def execute_experiment_with_debugger(workspace_id: str, db: aiosqlite.Conn
         err_line = run1.stderr.strip().splitlines()[-1] if run1.stderr else "Execution error"
 
         # 3. Hand off to Debugger Agent + local Llama
-        await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_debugger'")
-        await db.commit()
+        with db.cursor() as cur:
+            cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_debugger'")
+        db.commit()
 
         used_fallback = False
         try:
@@ -319,31 +345,36 @@ Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}
         # Save failure + fix to research_memory & canvas
         fix_node_id = uuid.uuid4().hex
         fix_x, fix_y = await get_free_position(workspace_id, exp_x + 300, exp_y, db)
-        await db.execute(
-            "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'error_fix', ?, ?, ?, ?)",
-            (fix_node_id, workspace_id, "Fix: max_features='auto'", fix_summary, fix_x, fix_y),
-        )
-        await db.execute(
-            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'fixed_by', 1)",
-            (uuid.uuid4().hex, workspace_id, exp_id, fix_node_id),
-        )
-        await db.execute(
-            "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution) VALUES (?, ?, 'agent_debugger', 'fix', ?, ?)",
-            (workspace_id, exp_id, err_line, fix_summary),
-        )
-        await db.execute(
-            "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_debugger', ?, ?, ?, 'auto')",
-            (
-                workspace_id,
-                fix_node_id,
-                "Caught & patched scikit-learn error",
-                f"{fix_summary} (Ollama unavailable or returned invalid JSON; deterministic fix applied.)"
-                if used_fallback
-                else fix_summary,
-            ),
-        )
-        await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_debugger'")
-        await db.commit()
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (%s, %s, 'error_fix', %s, %s, %s, %s)",
+                (fix_node_id, workspace_id, "Fix: max_features='auto'", fix_summary, fix_x, fix_y),
+            )
+            cur.execute(
+                "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (%s, %s, %s, %s, 'fixed_by', TRUE)",
+                (uuid.uuid4().hex, workspace_id, exp_id, fix_node_id),
+            )
+            cur.execute(
+                "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution) VALUES (%s, %s, 'agent_debugger', 'fix', %s, %s) RETURNING id",
+                (workspace_id, exp_id, err_line, fix_summary),
+            )
+            cur.fetchone()
+            cur.execute(
+                "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (%s, 'agent_debugger', %s, %s, %s, 'auto') RETURNING id",
+                (
+                    workspace_id,
+                    fix_node_id,
+                    "Caught & patched scikit-learn error",
+                    f"{fix_summary} (Ollama unavailable or returned invalid JSON; deterministic fix applied.)"
+                    if used_fallback
+                    else fix_summary,
+                ),
+            )
+            cur.fetchone()
+            cur.execute(
+                "UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_debugger'"
+            )
+        db.commit()
 
     # 4. Run patched script
     run2 = _run_experiment_script(FIXED_EXPERIMENT_SCRIPT)
@@ -365,26 +396,32 @@ Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}
     res_node_id = uuid.uuid4().hex
     res_title = f"AUC: SMOTE {metrics['smote_auc']} vs Base {metrics['baseline_auc']}"
     res_x, res_y = await get_free_position(workspace_id, exp_x, exp_y + 180, db)
-    await db.execute(
-        "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (?, ?, 'result', ?, ?, ?, ?, ?)",
-        (res_node_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
-    )
-    await db.execute(
-        "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'produced', 1)",
-        (uuid.uuid4().hex, workspace_id, exp_id, res_node_id),
-    )
-    await db.execute(
-        "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, resolution) VALUES (?, ?, 'agent_coder', 'success', ?)",
-        (workspace_id, exp_id, res_title),
-    )
-    await db.execute(
-        "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_coder', ?, ?, ?, 'auto')",
-        (workspace_id, res_node_id, f"Reproduction complete: {res_title}", "Executed patched script on CPU and recorded metrics."),
-    )
-    await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_coder'")
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (%s, %s, 'result', %s, %s, %s, %s, %s)",
+            (res_node_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
+        )
+        cur.execute(
+            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (%s, %s, %s, %s, 'produced', TRUE)",
+            (uuid.uuid4().hex, workspace_id, exp_id, res_node_id),
+        )
+        cur.execute(
+            "INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, resolution) VALUES (%s, %s, 'agent_coder', 'success', %s) RETURNING id",
+            (workspace_id, exp_id, res_title),
+        )
+        cur.fetchone()
+        cur.execute(
+            "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (%s, 'agent_coder', %s, %s, %s, 'auto') RETURNING id",
+            (workspace_id, res_node_id, f"Reproduction complete: {res_title}", "Executed patched script on CPU and recorded metrics."),
+        )
+        cur.fetchone()
+        cur.execute(
+            "UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.2 WHERE id = 'agent_coder'"
+        )
+    db.commit()
 
     return {"status": "completed", "metrics": metrics}
+
 
 WHAT_IF_SCRIPT_TEMPLATE = """
 import json
@@ -433,9 +470,10 @@ print(json.dumps({{
 """
 
 
-async def run_what_if_experiment(workspace_id: str, question: str, db: aiosqlite.Connection):
-    await db.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
-    await db.commit()
+async def run_what_if_experiment(workspace_id: str, question: str, db):
+    with db.cursor() as cur:
+        cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
+    db.commit()
 
     # 1. Ask local Llama to parse the "What If" parameters
     model_type = "random_forest" if "forest" in question.lower() or "rf" in question.lower() else "decision_tree"
@@ -454,26 +492,29 @@ Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbo
         reasoning = f"Testing {model_type} with k={k_neighbors} based on user what-if prompt."
 
     # 2. Find the latest experiment node to branch off from
-    cursor = await db.execute(
-        "SELECT id FROM nodes WHERE workspace_id = ? AND type = 'experiment' ORDER BY created_at DESC LIMIT 1",
-        (workspace_id,),
-    )
-    prev_exp = await cursor.fetchone()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM nodes WHERE workspace_id = %s AND type = 'experiment' ORDER BY created_at DESC LIMIT 1",
+            (workspace_id,),
+        )
+        prev_exp = cur.fetchone()
     prev_exp_id = prev_exp["id"] if prev_exp else None
 
     # 3. Create the new branched Experiment node
     exp_id = uuid.uuid4().hex
     exp_title = f"What-If: {model_type.replace('_', ' ').title()} (k={k_neighbors})"
     exp_x, exp_y = await get_free_position(workspace_id, 420, 620, db)
-    await db.execute(
-        "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (?, ?, 'experiment', ?, ?, ?, ?)",
-        (exp_id, workspace_id, exp_title, question, exp_x, exp_y),
-    )
-    if prev_exp_id:
-        await db.execute(
-            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'what_if_branch', 1)",
-            (uuid.uuid4().hex, workspace_id, prev_exp_id, exp_id),
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO nodes (id, workspace_id, type, title, content, pos_x, pos_y) VALUES (%s, %s, 'experiment', %s, %s, %s, %s)",
+            (exp_id, workspace_id, exp_title, question, exp_x, exp_y),
         )
+        if prev_exp_id:
+            cur.execute(
+                "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (%s, %s, %s, %s, 'what_if_branch', TRUE)",
+                (uuid.uuid4().hex, workspace_id, prev_exp_id, exp_id),
+            )
+    db.commit()
 
     # 4. Run the modified Python script on CPU
     script = WHAT_IF_SCRIPT_TEMPLATE.format(model_type=model_type, k_neighbors=k_neighbors)
@@ -485,8 +526,9 @@ Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbo
     script_path.unlink(missing_ok=True)
 
     if run.returncode != 0:
-        await db.execute("UPDATE agents SET status = 'idle' WHERE id = 'agent_coder'")
-        await db.commit()
+        with db.cursor() as cur:
+            cur.execute("UPDATE agents SET status = 'idle' WHERE id = 'agent_coder'")
+        db.commit()
         return {"error": run.stderr}
 
     metrics = json.loads(run.stdout.strip())
@@ -495,19 +537,23 @@ Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbo
     res_id = uuid.uuid4().hex
     res_title = f"AUC: {metrics['smote_auc']} | F1: {metrics['smote_f1']} ({model_type})"
     res_x, res_y = await get_free_position(workspace_id, exp_x, exp_y + 180, db)
-    await db.execute(
-        "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (?, ?, 'result', ?, ?, ?, ?, ?)",
-        (res_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
-    )
-    await db.execute(
-        "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (?, ?, ?, ?, 'produced', 1)",
-        (uuid.uuid4().hex, workspace_id, exp_id, res_id),
-    )
-    await db.execute(
-        "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (?, 'agent_coder', ?, ?, ?, 'auto')",
-        (workspace_id, res_id, f"What-If complete: {res_title}", reasoning),
-    )
-    await db.execute("UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.1 WHERE id = 'agent_coder'")
-    await db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO nodes (id, workspace_id, type, title, content, metadata_json, pos_x, pos_y) VALUES (%s, %s, 'result', %s, %s, %s, %s, %s)",
+            (res_id, workspace_id, res_title, json.dumps(metrics), json.dumps(metrics), res_x, res_y),
+        )
+        cur.execute(
+            "INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested) VALUES (%s, %s, %s, %s, 'produced', TRUE)",
+            (uuid.uuid4().hex, workspace_id, exp_id, res_id),
+        )
+        cur.execute(
+            "INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, approval_status) VALUES (%s, 'agent_coder', %s, %s, %s, 'auto') RETURNING id",
+            (workspace_id, res_id, f"What-If complete: {res_title}", reasoning),
+        )
+        cur.fetchone()
+        cur.execute(
+            "UPDATE agents SET status = 'idle', tasks_completed = tasks_completed + 1, rating_score = rating_score + 0.1 WHERE id = 'agent_coder'"
+        )
+    db.commit()
 
     return {"status": "completed", "metrics": metrics}

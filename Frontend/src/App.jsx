@@ -16,11 +16,13 @@ import {
   GitBranch,
   Download,
   LayoutGrid,
+  RotateCcw,
   Search,
   Moon,
   Sun,
   X,
   Check,
+  CheckCircle2,
   Star,
   AlertCircle,
 } from 'lucide-react';
@@ -92,6 +94,7 @@ export default function App() {
   const [isRunningWhatIf, setIsRunningWhatIf] = useState(false);
   const [pendingLogId, setPendingLogId] = useState(null);
   const [isTidyingLayout, setIsTidyingLayout] = useState(false);
+  const [isResettingDemo, setIsResettingDemo] = useState(false);
   const [rfInstance, setRfInstance] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNode, setSelectedNode] = useState(null);
@@ -99,6 +102,7 @@ export default function App() {
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const [theme, setTheme] = useState(getInitialTheme);
+  const [sidebarTab, setSidebarTab] = useState('activity');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -322,7 +326,7 @@ export default function App() {
         });
         const data = await res.json();
         if (data?.error) {
-          setToast({ message: data.error });
+          setToast({ message: data.error, type: 'error' });
           return;
         }
         await refreshGraph(workspaceId);
@@ -348,7 +352,7 @@ export default function App() {
       }
       setModalMode(null);
     } catch {
-      setToast({ message: 'Request failed. Please ensure the backend server is running.' });
+      setToast({ message: 'Request failed. Please ensure the backend server is running.', type: 'error' });
     } finally {
       setIsModalSubmitting(false);
       setIsRunningWhatIf(false);
@@ -368,7 +372,7 @@ export default function App() {
       await refreshGraph(workspaceId);
       await fetchAgentData();
     } catch {
-      setToast({ message: 'Failed to submit decision. Please try again.' });
+      setToast({ message: 'Failed to submit decision. Please try again.', type: 'error' });
     } finally {
       setPendingLogId(null);
     }
@@ -384,13 +388,13 @@ export default function App() {
       });
       const data = await res.json();
       if (data.error) {
-        setToast({ message: data.error });
+        setToast({ message: data.error, type: 'error' });
         return;
       }
       await refreshGraph(workspaceId);
       await fetchAgentData();
     } catch {
-      setToast({ message: 'Analyze request failed. Please check the backend connection.' });
+      setToast({ message: 'Analyze request failed. Please check the backend connection.', type: 'error' });
     } finally {
       setIsAnalyzing(false);
     }
@@ -406,7 +410,7 @@ export default function App() {
       });
       await fetchAgentData();
     } catch {
-      setToast({ message: 'Failed to request reproduction experiment.' });
+      setToast({ message: 'Failed to request reproduction experiment.', type: 'error' });
     } finally {
       setIsRunningExperiment(false);
     }
@@ -466,9 +470,72 @@ export default function App() {
 
       rfInstance?.fitView({ padding: 0.2, duration: 250 });
     } catch {
-      setToast({ message: 'Failed to save auto-layout positions.' });
+      setToast({ message: 'Failed to save auto-layout positions.', type: 'error' });
     } finally {
       setIsTidyingLayout(false);
+    }
+  };
+
+  // 1-Click "New Demo" reset
+  const resetDemo = async () => {
+    if (isResettingDemo) return;
+    setIsResettingDemo(true);
+    try {
+      const wsRes = await fetch(`${API}/workspaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'SMOTE Research Workspace' }),
+      });
+      const ws = await wsRes.json();
+      const newWsId = ws.id;
+      localStorage.setItem('rg_workspace_id', newWsId);
+
+      await Promise.all([
+        fetch(`${API}/nodes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace_id: newWsId,
+            type: 'paper',
+            title: 'SMOTE: Synthetic Minority Over-sampling Technique',
+            content: '',
+            pos_x: 120,
+            pos_y: 120,
+          }),
+        }),
+        fetch(`${API}/nodes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace_id: newWsId,
+            type: 'question',
+            title: 'Does SMOTE beat class-weighted Decision Trees on Pima Diabetes?',
+            content: '',
+            pos_x: 460,
+            pos_y: 120,
+          }),
+        }),
+      ]);
+
+      setSelectedNode(null);
+      setSearchQuery('');
+      setSidebarTab('activity');
+      setWorkspaceId(newWsId);
+
+      const [agentsRes, logsRes] = await Promise.all([
+        fetch(`${API}/agents`),
+        fetch(`${API}/workspaces/${newWsId}/logs`),
+      ]);
+      setAgents(await agentsRes.json());
+      setLogs(await logsRes.json());
+      await refreshGraph(newWsId);
+
+      rfInstance?.fitView({ padding: 0.25, duration: 250 });
+      setToast({ message: 'Fresh SMOTE demo workspace ready', type: 'success' });
+    } catch {
+      setToast({ message: 'Failed to reset demo workspace.', type: 'error' });
+    } finally {
+      setIsResettingDemo(false);
     }
   };
 
@@ -547,6 +614,11 @@ export default function App() {
     });
   }, [edges, theme]);
 
+  const hasPendingApproval = useMemo(
+    () => logs.some((log) => log.approval_status === 'pending'),
+    [logs]
+  );
+
   const inspectorType = selectedNode?.data?.type || 'note';
   const inspectorStyle = selectedNode ? getNodeTypeStyle(inspectorType) : null;
   const inspectorDetails = selectedNode
@@ -578,7 +650,7 @@ export default function App() {
             className="rg-btn rg-btn-secondary"
             onClick={() => setModalMode('paper')}
           >
-            <FileText size={16} strokeWidth={1.75} />
+            <FileText size={15} strokeWidth={1.75} />
             <span>+ Paper</span>
           </button>
           <button
@@ -586,7 +658,7 @@ export default function App() {
             className="rg-btn rg-btn-secondary"
             onClick={() => setModalMode('question')}
           >
-            <HelpCircle size={16} strokeWidth={1.75} />
+            <HelpCircle size={15} strokeWidth={1.75} />
             <span>+ Question</span>
           </button>
           <button
@@ -594,7 +666,7 @@ export default function App() {
             className="rg-btn rg-btn-secondary"
             onClick={() => setModalMode('note')}
           >
-            <StickyNote size={16} strokeWidth={1.75} />
+            <StickyNote size={15} strokeWidth={1.75} />
             <span>+ Note</span>
           </button>
           <span className="rg-divider" aria-hidden="true" />
@@ -629,7 +701,7 @@ export default function App() {
             onClick={runAnalyze}
             disabled={isAnalyzing}
           >
-            <Sparkles size={16} strokeWidth={1.75} />
+            <Sparkles size={15} strokeWidth={1.75} />
             <span>{isAnalyzing ? 'Analyzing...' : 'Analyze & Cluster'}</span>
           </button>
           <button
@@ -638,7 +710,7 @@ export default function App() {
             onClick={requestExperiment}
             disabled={isRunningExperiment}
           >
-            <FlaskConical size={16} strokeWidth={1.75} />
+            <FlaskConical size={15} strokeWidth={1.75} />
             <span>{isRunningExperiment ? 'Requesting...' : 'Run Reproduction'}</span>
           </button>
           <button
@@ -647,7 +719,7 @@ export default function App() {
             onClick={() => setModalMode('what_if')}
             disabled={isRunningWhatIf}
           >
-            <GitBranch size={16} strokeWidth={1.75} />
+            <GitBranch size={15} strokeWidth={1.75} />
             <span>{isRunningWhatIf ? 'Running...' : 'Ask "What If"'}</span>
           </button>
           <span className="rg-divider" aria-hidden="true" />
@@ -658,15 +730,25 @@ export default function App() {
             disabled={nodes.length === 0 || isTidyingLayout}
             title="Arrange nodes in clean non-overlapping rows"
           >
-            <LayoutGrid size={16} strokeWidth={1.75} />
+            <LayoutGrid size={15} strokeWidth={1.75} />
             <span>Auto-Layout</span>
+          </button>
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            onClick={resetDemo}
+            disabled={isResettingDemo}
+            title="Create a fresh SMOTE demo workspace"
+          >
+            <RotateCcw size={15} strokeWidth={1.75} />
+            <span>{isResettingDemo ? 'Resetting...' : 'Reset Demo'}</span>
           </button>
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
             onClick={exportWorkspace}
           >
-            <Download size={16} strokeWidth={1.75} />
+            <Download size={15} strokeWidth={1.75} />
             <span>Export MD</span>
           </button>
           <button
@@ -677,9 +759,9 @@ export default function App() {
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {theme === 'dark' ? (
-              <Sun size={16} strokeWidth={1.75} />
+              <Sun size={15} strokeWidth={1.75} />
             ) : (
-              <Moon size={16} strokeWidth={1.75} />
+              <Moon size={15} strokeWidth={1.75} />
             )}
           </button>
         </div>
@@ -780,93 +862,115 @@ export default function App() {
 
         {/* Right-Hand Agent Control Sidebar (320px) */}
         <aside className="rg-sidebar">
-          {/* 1. Agent Roster */}
-          <section aria-label="Agent Team">
-            <div className="rg-section-header">
-              <h2 className="rg-section-title">Agent Team</h2>
-              <span className="rg-section-count">{agents.length}</span>
+          <div className="rg-sidebar-tabs-header">
+            <div className="rg-segmented-tabs" role="tablist" aria-label="Sidebar Views">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarTab === 'activity'}
+                className={`rg-tab-btn ${sidebarTab === 'activity' ? 'is-active' : ''}`}
+                onClick={() => setSidebarTab('activity')}
+              >
+                {hasPendingApproval && (
+                  <span className="rg-pending-dot" title="Pending approval" />
+                )}
+                <span>Activity</span>
+                <span className="rg-tab-count">({logs.length})</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarTab === 'agents'}
+                className={`rg-tab-btn ${sidebarTab === 'agents' ? 'is-active' : ''}`}
+                onClick={() => setSidebarTab('agents')}
+              >
+                <span>Agents</span>
+                <span className="rg-tab-count">({agents.length})</span>
+              </button>
             </div>
-            <div className="rg-card-stack">
-              {agents.map((a) => (
-                <div key={a.id} className="rg-card">
-                  <div className="rg-agent-top">
-                    <span className="rg-agent-name">{a.name}</span>
-                    <span className="rg-rating-pill">
-                      <Star size={11} strokeWidth={2} fill="currentColor" aria-hidden="true" />
-                      <span>{a.rating_score.toFixed(1)}</span>
-                    </span>
-                  </div>
-                  <div className="rg-agent-meta">
-                    <span>Role: {a.role}</span>
-                    <span className={getStatusClass(a.status)}>
-                      {a.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          </div>
 
-          {/* 2. Live Activity Feed & Human-in-the-Loop Controls */}
-          <section aria-label="Live Activity Feed" style={{ flex: 1 }}>
-            <div className="rg-section-header">
-              <h2 className="rg-section-title">Live Activity Feed</h2>
-              <span className="rg-section-count">{logs.length}</span>
-            </div>
-            {logs.length === 0 ? (
-              <div className="rg-empty-state">No agent activity yet.</div>
+          <div className="rg-sidebar-scroll">
+            {sidebarTab === 'activity' ? (
+              <section aria-label="Live Activity Feed" role="tabpanel">
+                {logs.length === 0 ? (
+                  <div className="rg-empty-state">No agent activity yet.</div>
+                ) : (
+                  <div className="rg-card-stack">
+                    {logs.map((log) => {
+                      const isDecisionBusy = pendingLogId !== null;
+                      const isThisLogPending = pendingLogId === log.id;
+                      return (
+                        <div
+                          key={log.id}
+                          className={`rg-card ${log.approval_status === 'pending' ? 'rg-card-pending' : ''}`}
+                        >
+                          <div className="rg-log-header">
+                            <span className="rg-log-agent">{log.agent_name}</span>
+                            <span className={getLogPillClass(log.approval_status)}>
+                              {log.approval_status}
+                            </span>
+                          </div>
+                          <div className="rg-log-action">{log.action}</div>
+                          {log.reasoning && (
+                            <div className="rg-log-reasoning">
+                              Why: {log.reasoning}
+                            </div>
+                          )}
+
+                          {/* Approve / Reject buttons when pending */}
+                          {log.approval_status === 'pending' && (
+                            <div className="rg-decision-row">
+                              <button
+                                type="button"
+                                className="rg-decision-btn rg-decision-approve"
+                                disabled={isDecisionBusy}
+                                onClick={() => handleDecision(log.id, 'approved')}
+                              >
+                                <Check size={14} strokeWidth={2} />
+                                <span>{isThisLogPending ? 'Running...' : 'Approve'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="rg-decision-btn rg-decision-reject"
+                                disabled={isDecisionBusy}
+                                onClick={() => handleDecision(log.id, 'rejected')}
+                              >
+                                <X size={14} strokeWidth={2} />
+                                <span>Reject</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             ) : (
-              <div className="rg-card-stack">
-                {logs.map((log) => {
-                  const isDecisionBusy = pendingLogId !== null;
-                  const isThisLogPending = pendingLogId === log.id;
-                  return (
-                    <div
-                      key={log.id}
-                      className={`rg-card ${log.approval_status === 'pending' ? 'rg-card-pending' : ''}`}
-                    >
-                      <div className="rg-log-header">
-                        <span className="rg-log-agent">{log.agent_name}</span>
-                        <span className={getLogPillClass(log.approval_status)}>
-                          {log.approval_status}
+              <section aria-label="Agent Team" role="tabpanel">
+                <div className="rg-card-stack">
+                  {agents.map((a) => (
+                    <div key={a.id} className="rg-card">
+                      <div className="rg-agent-top">
+                        <span className="rg-agent-name">{a.name}</span>
+                        <span className="rg-rating-pill">
+                          <Star size={11} strokeWidth={2} fill="currentColor" aria-hidden="true" />
+                          <span>{a.rating_score.toFixed(1)}</span>
                         </span>
                       </div>
-                      <div className="rg-log-action">{log.action}</div>
-                      {log.reasoning && (
-                        <div className="rg-log-reasoning">
-                          Why: {log.reasoning}
-                        </div>
-                      )}
-
-                      {/* Approve / Reject buttons when pending */}
-                      {log.approval_status === 'pending' && (
-                        <div className="rg-decision-row">
-                          <button
-                            type="button"
-                            className="rg-decision-btn rg-decision-approve"
-                            disabled={isDecisionBusy}
-                            onClick={() => handleDecision(log.id, 'approved')}
-                          >
-                            <Check size={14} strokeWidth={2} />
-                            <span>{isThisLogPending ? 'Running...' : 'Approve'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="rg-decision-btn rg-decision-reject"
-                            disabled={isDecisionBusy}
-                            onClick={() => handleDecision(log.id, 'rejected')}
-                          >
-                            <X size={14} strokeWidth={2} />
-                            <span>Reject</span>
-                          </button>
-                        </div>
-                      )}
+                      <div className="rg-agent-meta">
+                        <span>Role: {a.role}</span>
+                        <span className={getStatusClass(a.status)}>
+                          {a.status}
+                        </span>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              </section>
             )}
-          </section>
+          </div>
         </aside>
       </div>
 
@@ -883,11 +987,15 @@ export default function App() {
         />
       )}
 
-      {/* Subtle Bottom-Center Error Toast */}
+      {/* Subtle Bottom-Center Toast */}
       {toast && (
         <div className="rg-toast-wrap" role="status" aria-live="polite">
-          <div className="rg-toast">
-            <AlertCircle size={16} strokeWidth={2} className="rg-toast-icon" aria-hidden="true" />
+          <div className={`rg-toast ${toast.type === 'success' ? 'is-success' : ''}`}>
+            {toast.type === 'success' ? (
+              <CheckCircle2 size={16} strokeWidth={2} className="rg-toast-icon" aria-hidden="true" />
+            ) : (
+              <AlertCircle size={16} strokeWidth={2} className="rg-toast-icon" aria-hidden="true" />
+            )}
             <span className="rg-toast-msg">{toast.message}</span>
             <button
               type="button"
