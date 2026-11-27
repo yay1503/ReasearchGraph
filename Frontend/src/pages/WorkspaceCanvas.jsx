@@ -21,6 +21,7 @@ import {
   Moon,
   Sun,
   ArrowLeft,
+  Cpu,
   X,
   Check,
   CheckCircle2,
@@ -30,7 +31,9 @@ import {
 import '@xyflow/react/dist/style.css';
 import ResearchNode from '../components/ResearchNode';
 import ActionModal from '../components/ActionModal';
+import EngineModal from '../components/EngineModal';
 import { getNodeColor, getNodeTypeStyle } from '../nodeStyles';
+import { PROVIDERS, getLLMConfig, getLLMHeaders } from '../utils/llmConfig';
 import { useTheme } from '../utils/theme';
 
 const API = 'http://127.0.0.1:8000';
@@ -108,6 +111,8 @@ export default function WorkspaceCanvas() {
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const [sidebarTab, setSidebarTab] = useState('activity');
+  const [llmConfig, setLlmConfig] = useState(getLLMConfig);
+  const [isEngineModalOpen, setIsEngineModalOpen] = useState(false);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -278,7 +283,7 @@ export default function WorkspaceCanvas() {
       if (modalMode === 'what_if') {
         const res = await fetch(`${API}/workspaces/${workspaceId}/agents/what-if`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
           body: JSON.stringify({ question }),
         });
         const data = await res.json();
@@ -323,7 +328,7 @@ export default function WorkspaceCanvas() {
     try {
       await fetch(`${API}/logs/${logId}/decision`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
         body: JSON.stringify({ decision }),
       });
       await refreshGraph(workspaceId);
@@ -335,13 +340,14 @@ export default function WorkspaceCanvas() {
     }
   };
 
-  // Workflow 1: Trigger Reader & Clusterer Agents via local Llama
+  // Workflow 1: Trigger Reader & Clusterer Agents via configured LLM
   const runAnalyze = async () => {
     if (!workspaceId || isAnalyzing) return;
     setIsAnalyzing(true);
     try {
       const res = await fetch(`${API}/workspaces/${workspaceId}/agents/analyze`, {
         method: 'POST',
+        headers: { ...getLLMHeaders() },
       });
       const data = await res.json();
       if (data.error) {
@@ -364,6 +370,7 @@ export default function WorkspaceCanvas() {
     try {
       await fetch(`${API}/workspaces/${workspaceId}/agents/experiment/request`, {
         method: 'POST',
+        headers: { ...getLLMHeaders() },
       });
       await fetchAgentData();
     } catch {
@@ -720,6 +727,16 @@ export default function WorkspaceCanvas() {
           </button>
           <button
             type="button"
+            className="rg-btn rg-btn-secondary rg-engine-pill-btn"
+            onClick={() => setIsEngineModalOpen(true)}
+            title="Configure AI Engine"
+          >
+            <span className="rg-engine-pill-dot" aria-hidden="true" />
+            <Cpu size={13} strokeWidth={1.85} aria-hidden="true" />
+            <span>{PROVIDERS[llmConfig.provider]?.shortLabel || 'Local Llama'}</span>
+          </button>
+          <button
+            type="button"
             className="rg-btn rg-btn-secondary rg-btn-icon"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -951,6 +968,14 @@ export default function WorkspaceCanvas() {
           }}
           onSubmit={handleModalSubmit}
           isSubmitting={isModalSubmitting}
+        />
+      )}
+
+      {/* LLM Engine Configuration Modal */}
+      {isEngineModalOpen && (
+        <EngineModal
+          onClose={() => setIsEngineModalOpen(false)}
+          onSaved={(saved) => setLlmConfig(saved)}
         />
       )}
 

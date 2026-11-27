@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   BookOpen,
+  Cpu,
   Loader2,
   LogOut,
   Moon,
@@ -13,6 +14,8 @@ import {
   User,
   X,
 } from 'lucide-react';
+import EngineModal from '../components/EngineModal';
+import { PROVIDERS, getLLMConfig } from '../utils/llmConfig';
 import { useTheme } from '../utils/theme';
 
 const API = 'http://127.0.0.1:8000';
@@ -65,6 +68,10 @@ export default function DashboardPage() {
 
   // Logout state
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // LLM Engine modal state
+  const [llmConfig, setLlmConfig] = useState(getLLMConfig);
+  const [isEngineModalOpen, setIsEngineModalOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('rg_token');
@@ -287,6 +294,17 @@ export default function DashboardPage() {
           </div>
 
           <div className="rg-dash-nav-actions">
+            <button
+              type="button"
+              className="rg-btn rg-btn-secondary rg-engine-pill-btn"
+              onClick={() => setIsEngineModalOpen(true)}
+              title="Configure AI Engine"
+            >
+              <span className="rg-engine-pill-dot" aria-hidden="true" />
+              <Cpu size={13} strokeWidth={1.85} aria-hidden="true" />
+              <span>{PROVIDERS[llmConfig.provider]?.shortLabel || 'Local Llama'}</span>
+            </button>
+
             <button
               type="button"
               className="rg-btn rg-btn-secondary rg-btn-icon"
@@ -614,6 +632,13 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {isEngineModalOpen && (
+        <EngineModal
+          onClose={() => setIsEngineModalOpen(false)}
+          onSaved={(saved) => setLlmConfig(saved)}
+        />
       )}
     </div>
   );
