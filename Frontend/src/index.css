@@ -2144,3 +2144,187 @@ body,
     transition: none;
   }
 }
+
+/* Auth Pages (Login / Signup) */
+.rg-auth-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.rg-auth-main {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 20px 48px;
+}
+
+.rg-auth-card {
+  width: 100%;
+  max-width: 430px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-paper);
+  border-radius: 16px;
+  box-shadow: var(--shadow-hover);
+  overflow: hidden;
+}
+
+.rg-auth-mascot-band {
+  padding: 18px 20px 8px;
+  background-color: var(--bg-canvas);
+  border-bottom: 1px solid var(--border-paper);
+  display: flex;
+  justify-content: center;
+}
+
+.rg-auth-body {
+  padding: 24px 26px 26px;
+}
+
+.rg-auth-title {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text-ink);
+}
+
+.rg-auth-subtitle {
+  margin-top: 6px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.rg-auth-error {
+  margin-top: 14px;
+  padding: 9px 11px;
+  background-color: var(--status-danger-bg);
+  border: 1px solid var(--status-danger-border);
+  border-radius: 8px;
+  color: var(--status-danger);
+  font-size: 12.5px;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rg-auth-error-icon {
+  flex-shrink: 0;
+}
+
+.rg-auth-form {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rg-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.rg-password-input {
+  padding-right: 38px;
+}
+
+.rg-password-toggle {
+  position: absolute;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.rg-password-toggle:hover:not(:disabled) {
+  background-color: var(--bg-subtle);
+  color: var(--text-ink);
+}
+
+.rg-password-toggle:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 1px;
+}
+
+.rg-btn-block {
+  width: 100%;
+}
+
+.rg-auth-divider {
+  position: relative;
+  margin: 16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rg-auth-divider::before,
+.rg-auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: var(--border-paper);
+}
+
+.rg-auth-divider span {
+  padding: 0 10px;
+}
+
+.rg-auth-footer {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.rg-auth-link {
+  color: var(--text-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong);
+  transition: text-decoration-color 140ms ease;
+}
+
+.rg-auth-link:hover {
+  text-decoration-color: var(--text-ink);
+}
+
+@keyframes rgSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rg-spin {
+  animation: rgSpin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rg-spin {
+    animation: none;
+  }
+}
