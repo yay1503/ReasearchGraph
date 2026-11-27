@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, FlaskConical, Moon, Sun, AlertCircle, X } from 'lucide-react';
+import HeroGraphPreview from '../components/HeroGraphPreview';
 import { useTheme } from '../utils/theme';
 
 const API = 'http://127.0.0.1:8000';
@@ -149,11 +150,9 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Right Column: Slot reserved for <HeroGraphPreview /> in Step 2 */}
-        <div className="rg-hero-preview-slot rg-stagger-3" aria-label="Graph preview">
-          <div className="rg-hero-slot-placeholder">
-            <span className="rg-hero-slot-label">INTERACTIVE EXPERIMENT GRAPH</span>
-          </div>
+        {/* Right Column: Animated Mini-Graph Preview */}
+        <div className="rg-hero-preview-slot rg-stagger-3" aria-label="Interactive graph preview">
+          <HeroGraphPreview />
         </div>
       </main>
 
