@@ -5,10 +5,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import httpx
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3"  # Change this to match your `ollama list` name
+from llm import call_llm_json
 
 
 async def get_free_position(
@@ -40,23 +37,11 @@ async def get_free_position(
     return x, y
 
 
-async def call_llama_json(prompt: str, timeout: float = 120.0) -> dict:
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.post(
-            OLLAMA_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "format": "json",
-                "stream": False,
-            },
-        )
-        res.raise_for_status()
-        raw_text = res.json()["response"]
-        return json.loads(raw_text)
-
-
-async def run_reader_and_clusterer(workspace_id: str, db):
+async def run_reader_and_clusterer(
+    workspace_id: str,
+    db,
+    llm_config: dict | None = None,
+):
     # 1. Fetch existing paper and question nodes
     with db.cursor() as cur:
         cur.execute(
@@ -96,12 +81,12 @@ Allowed node types: "dataset", "note".
 """
 
     try:
-        result = await call_llama_json(prompt)
+        result = await call_llm_json(prompt, config=llm_config)
     except Exception as e:
         with db.cursor() as cur:
             cur.execute("UPDATE agents SET status = 'idle' WHERE id = 'agent_reader'")
         db.commit()
-        return {"error": f"Ollama call failed: {str(e)}"}
+        return {"error": str(e)}
 
     # 3. Switch to Clusterer Agent to insert nodes & suggested edges
     with db.cursor() as cur:
@@ -290,7 +275,11 @@ async def request_experiment_approval(workspace_id: str, db):
     return {"status": "waiting_approval", "log_id": log_id}
 
 
-async def execute_experiment_with_debugger(workspace_id: str, db):
+async def execute_experiment_with_debugger(
+    workspace_id: str,
+    db,
+    llm_config: dict | None = None,
+):
     # Find an anchor node (prefer dataset, fallback to any node)
     with db.cursor() as cur:
         cur.execute(
@@ -330,9 +319,10 @@ async def execute_experiment_with_debugger(workspace_id: str, db):
 
         used_fallback = False
         try:
-            debug_res = await call_llama_json(
+            debug_res = await call_llm_json(
                 f"""A scikit-learn script failed with: {err_line}
 Explain the fix in one short sentence. Return ONLY JSON: {{"fix_summary": "..."}}""",
+                config=llm_config,
                 timeout=10.0,
             )
             fix_summary = debug_res.get("fix_summary")
@@ -470,7 +460,12 @@ print(json.dumps({{
 """
 
 
-async def run_what_if_experiment(workspace_id: str, question: str, db):
+async def run_what_if_experiment(
+    workspace_id: str,
+    question: str,
+    db,
+    llm_config: dict | None = None,
+):
     with db.cursor() as cur:
         cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_coder'")
     db.commit()
@@ -479,9 +474,10 @@ async def run_what_if_experiment(workspace_id: str, question: str, db):
     model_type = "random_forest" if "forest" in question.lower() or "rf" in question.lower() else "decision_tree"
     k_neighbors = 3
     try:
-        parsed = await call_llama_json(
+        parsed = await call_llm_json(
             f"""Parse this research 'what if' question: "{question}"
-Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbors": integer between 2 and 10, "reasoning": "1 short sentence"}}"""
+Return ONLY JSON: {{"model_type": "random_forest" or "decision_tree", "k_neighbors": integer between 2 and 10, "reasoning": "1 short sentence"}}""",
+            config=llm_config,
         )
         if parsed.get("model_type") in ("random_forest", "decision_tree"):
             model_type = parsed["model_type"]

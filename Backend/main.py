@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from agents import (
 )
 from auth import get_current_user, get_optional_user, router as auth_router
 from db import get_db, init_db
+from llm import DEFAULT_MODELS, call_llm
 
 
 @asynccontextmanager
@@ -216,18 +217,64 @@ async def get_logs(workspace_id: str, db=Depends(get_db)):
         return [dict(row) for row in cur.fetchall()]
 
 
+def get_llm_config(request: Request) -> dict:
+    return {
+        "provider": (request.headers.get("X-LLM-Provider") or "ollama").strip().lower(),
+        "model": (request.headers.get("X-LLM-Model") or "").strip(),
+        "api_key": (request.headers.get("X-LLM-API-Key") or "").strip(),
+    }
+
+
+class LLMTestRequest(BaseModel):
+    provider: str = "ollama"
+    model: str = ""
+    api_key: str = ""
+
+
+@app.post("/llm/test")
+async def test_llm_connection(body: LLMTestRequest):
+    config = {
+        "provider": (body.provider or "ollama").strip().lower(),
+        "model": (body.model or "").strip(),
+        "api_key": (body.api_key or "").strip(),
+    }
+    try:
+        reply = await call_llm("Reply with OK", config=config, timeout=20.0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "ok": True,
+        "provider": config["provider"],
+        "model": config["model"] or DEFAULT_MODELS.get(config["provider"], ""),
+        "reply": reply.strip()[:80],
+    }
+
+
 @app.post("/workspaces/{workspace_id}/agents/analyze")
-async def analyze_workspace(workspace_id: str, db=Depends(get_db)):
-    return await run_reader_and_clusterer(workspace_id, db)
+async def analyze_workspace(
+    workspace_id: str,
+    llm_config: dict = Depends(get_llm_config),
+    db=Depends(get_db),
+):
+    return await run_reader_and_clusterer(workspace_id, db, llm_config=llm_config)
 
 
 @app.post("/workspaces/{workspace_id}/agents/experiment/request")
-async def request_experiment(workspace_id: str, db=Depends(get_db)):
+async def request_experiment(
+    workspace_id: str,
+    _llm_config: dict = Depends(get_llm_config),
+    db=Depends(get_db),
+):
     return await request_experiment_approval(workspace_id, db)
 
 
 @app.post("/logs/{log_id}/decision")
-async def decide_log(log_id: int, body: LogDecision, db=Depends(get_db)):
+async def decide_log(
+    log_id: int,
+    body: LogDecision,
+    llm_config: dict = Depends(get_llm_config),
+    db=Depends(get_db),
+):
     with db.cursor() as cur:
         cur.execute(
             "SELECT workspace_id, agent_id, approval_status FROM agent_logs WHERE id = %s",
@@ -256,7 +303,9 @@ async def decide_log(log_id: int, body: LogDecision, db=Depends(get_db)):
     db.commit()
 
     if body.decision == "approved" and log_row["agent_id"] == "agent_coder":
-        await execute_experiment_with_debugger(log_row["workspace_id"], db)
+        await execute_experiment_with_debugger(
+            log_row["workspace_id"], db, llm_config=llm_config
+        )
 
     return {"status": body.decision, "log_id": log_id}
 
@@ -266,8 +315,15 @@ class WhatIfRequest(BaseModel):
 
 
 @app.post("/workspaces/{workspace_id}/agents/what-if")
-async def what_if_experiment(workspace_id: str, body: WhatIfRequest, db=Depends(get_db)):
-    return await run_what_if_experiment(workspace_id, body.question, db)
+async def what_if_experiment(
+    workspace_id: str,
+    body: WhatIfRequest,
+    llm_config: dict = Depends(get_llm_config),
+    db=Depends(get_db),
+):
+    return await run_what_if_experiment(
+        workspace_id, body.question, db, llm_config=llm_config
+    )
 
 
 @app.get("/workspaces/{workspace_id}/export", response_class=PlainTextResponse)
