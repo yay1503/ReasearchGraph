@@ -45,7 +45,7 @@ export default function LoginPage() {
       localStorage.setItem('rg_token', data.token);
       localStorage.setItem('rg_user', JSON.stringify(data.user));
       await syncUserWorkspace(data.token);
-      navigate('/workspace');
+      navigate('/dashboard');
     } catch {
       setError('Could not connect to the authentication server.');
       setMood('sad');
@@ -71,7 +71,7 @@ export default function LoginPage() {
       localStorage.setItem('rg_token', data.token);
       localStorage.setItem('rg_user', JSON.stringify(data.user));
       await syncUserWorkspace(data.token);
-      navigate('/workspace');
+      navigate('/dashboard');
     } catch {
       setError('Could not connect to the backend demo endpoint.');
       setMood('sad');
