@@ -2045,3 +2045,102 @@ body,
     padding: 18px 20px;
   }
 }
+
+/* Interactive Agent Mascots */
+.rg-mascots {
+  display: block;
+  overflow: visible;
+  user-select: none;
+  --pupil-x: 0px;
+  --pupil-y: 0px;
+  --face-x: 0px;
+  --face-y: 0px;
+  --face-tilt: 0deg;
+}
+
+.rg-mascot-baseline {
+  stroke: var(--border-strong);
+}
+
+.rg-mascot-amber .rg-mascot-body {
+  fill: #D97706;
+  stroke: rgba(28, 25, 23, 0.08);
+  stroke-width: 1;
+}
+
+.rg-mascot-center .rg-mascot-body {
+  fill: #1C1917;
+  stroke: #1C1917;
+  stroke-width: 1;
+}
+
+[data-theme="dark"] .rg-mascot-center .rg-mascot-body {
+  fill: #27272A;
+  stroke: #3F3F46;
+  stroke-width: 1.5;
+}
+
+.rg-mascot-emerald .rg-mascot-body {
+  fill: #059669;
+  stroke: rgba(28, 25, 23, 0.08);
+  stroke-width: 1;
+}
+
+.rg-mascot-creature {
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rg-mascot-creature-1 {
+  transition-delay: 40ms;
+}
+
+.rg-mascot-creature-2 {
+  transition-delay: 80ms;
+}
+
+.rg-mascots.mood-happy .rg-mascot-creature {
+  transform: translateY(-4px);
+}
+
+.rg-mascots.mood-sad .rg-mascot-creature {
+  transform: translateY(3px);
+}
+
+.rg-mascot-face {
+  transform: translate(var(--face-x), var(--face-y)) rotate(var(--face-tilt));
+  transition: transform 120ms ease-out;
+}
+
+.rg-mascots.mood-shy .rg-mascot-face {
+  transform: translate(-2px, -1px) rotate(-2deg);
+}
+
+.rg-mascot-eye-scale {
+  transition: transform 160ms ease-out;
+}
+
+.rg-mascots.mood-happy .rg-mascot-eye-scale {
+  transform: scale(1.06);
+}
+
+.rg-mascots.mood-sad .rg-mascot-eye-scale {
+  transform: scaleY(0.86);
+}
+
+.rg-mascot-pupil {
+  transform: translate(var(--pupil-x), var(--pupil-y));
+  transition: transform 120ms ease-out;
+}
+
+.rg-mascots.mood-shy .rg-mascot-pupil {
+  transform: translate(-3.6px, -3.2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rg-mascot-creature,
+  .rg-mascot-face,
+  .rg-mascot-eye-scale,
+  .rg-mascot-pupil {
+    transition: none;
+  }
+}
