@@ -2,6 +2,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { ArrowLeft, Moon, Sun } from 'lucide-react';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import SignupPage from './pages/SignupPage';
 import WorkspaceCanvas from './pages/WorkspaceCanvas';
 import { useTheme } from './utils/theme';
 
@@ -58,15 +59,7 @@ export default function App() {
         <Route path="/workspace" element={<WorkspaceCanvas />} />
         <Route path="/workspace/:id" element={<WorkspaceCanvas />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/signup"
-          element={
-            <RoutePlaceholder
-              title="Create Account"
-              description="Registration screen coming next. You can sign in or try the demo workspace right now."
-            />
-          }
-        />
+        <Route path="/signup" element={<SignupPage />} />
         <Route
           path="/dashboard"
           element={
