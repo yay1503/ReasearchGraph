@@ -12,6 +12,7 @@ from agents import (
     run_reader_and_clusterer,
     run_what_if_experiment,
 )
+from auth import router as auth_router
 from db import get_db, init_db
 
 
@@ -29,6 +30,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 
 class WorkspaceCreate(BaseModel):
