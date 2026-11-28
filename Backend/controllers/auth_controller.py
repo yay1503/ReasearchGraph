@@ -1,24 +1,11 @@
 import secrets
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 import psycopg2
-from pydantic import BaseModel
 
-from db import get_db, hash_password, verify_password
-
-router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-class SignupRequest(BaseModel):
-    name: str
-    email: str
-    password: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+from core.db import get_db, hash_password, verify_password
+from models.schemas import LoginRequest, SignupRequest
 
 
 def _parse_bearer_token(authorization: str | None) -> str | None:
@@ -84,8 +71,7 @@ def _create_session(user_id: str, db) -> str:
     return token
 
 
-@router.post("/signup")
-def signup(body: SignupRequest, db=Depends(get_db)):
+def signup_user(body: SignupRequest, db) -> dict:
     name = body.name.strip()
     email = body.email.strip().lower()
     if not name or not email:
@@ -124,8 +110,7 @@ def signup(body: SignupRequest, db=Depends(get_db)):
     }
 
 
-@router.post("/login")
-def login(body: LoginRequest, db=Depends(get_db)):
+def login_user(body: LoginRequest, db) -> dict:
     email = body.email.strip().lower()
     with db.cursor() as cur:
         cur.execute(
@@ -145,8 +130,7 @@ def login(body: LoginRequest, db=Depends(get_db)):
     }
 
 
-@router.post("/demo")
-def demo_login(db=Depends(get_db)):
+def demo_login_user(db) -> dict:
     with db.cursor() as cur:
         cur.execute(
             "SELECT id, name, email FROM users WHERE email = %s",
@@ -165,18 +149,8 @@ def demo_login(db=Depends(get_db)):
     }
 
 
-@router.post("/logout")
-def logout(
-    _user: dict = Depends(get_current_user),
-    token: str = Depends(_extract_bearer_token),
-    db=Depends(get_db),
-):
+def logout_user(token: str, db) -> dict:
     with db.cursor() as cur:
         cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
     db.commit()
     return {"message": "Logged out"}
-
-
-@router.get("/me")
-def get_me(user: dict = Depends(get_current_user)):
-    return user

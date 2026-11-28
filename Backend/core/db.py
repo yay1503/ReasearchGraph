@@ -9,7 +9,7 @@ import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 load_dotenv()
 
 
@@ -149,12 +149,16 @@ def init_db():
                     node_id TEXT DEFAULT NULL REFERENCES nodes(id) ON DELETE SET NULL,
                     action TEXT NOT NULL,
                     reasoning TEXT DEFAULT '',
+                    payload_json TEXT DEFAULT '{}',
                     approval_status TEXT DEFAULT 'auto' CHECK (
                         approval_status IN ('auto', 'pending', 'approved', 'rejected', 'redirected')
                     ),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
+            )
+            cur.execute(
+                "ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS payload_json TEXT DEFAULT '{}';"
             )
             cur.execute(
                 """
@@ -172,11 +176,22 @@ def init_db():
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS workspace_shares (
+                    share_token TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    role TEXT DEFAULT 'viewer',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            cur.execute(
+                """
                 INSERT INTO agents (id, name, role) VALUES
                     ('agent_reader', 'Reader Agent', 'reader'),
                     ('agent_clusterer', 'Clusterer Agent', 'clusterer'),
                     ('agent_coder', 'Experiment Agent', 'coder'),
-                    ('agent_debugger', 'Debugger Agent', 'debugger')
+                    ('agent_debugger', 'Debugger Agent', 'debugger'),
+                    ('agent_planner', 'Harness Agent', 'planner')
                 ON CONFLICT (id) DO NOTHING;
                 """
             )
