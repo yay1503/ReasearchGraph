@@ -3,6 +3,7 @@ from fastapi.responses import PlainTextResponse
 
 from controllers.auth_controller import get_current_user, get_optional_user
 from controllers.graph_controller import (
+    continue_shared_workspace,
     create_graph_edge,
     create_graph_node,
     create_new_workspace,
@@ -109,14 +110,30 @@ async def export_workspace(workspace_id: str, db=Depends(get_db)):
 async def share_workspace(
     workspace_id: str,
     body: ShareCreateRequest | None = None,
+    current_user: dict | None = Depends(get_optional_user),
     db=Depends(get_db),
 ):
-    return create_workspace_share(workspace_id, body.role if body else "editor", db)
+    return create_workspace_share(
+        workspace_id,
+        body.role if body else "snapshot",
+        db,
+        refresh=body.refresh if body else False,
+        current_user=current_user,
+    )
 
 
 @router.get("/share/{share_token}")
 async def read_shared_workspace(share_token: str, db=Depends(get_db)):
     return get_shared_workspace(share_token, db)
+
+
+@router.post("/share/{share_token}/continue")
+async def continue_share(
+    share_token: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    return continue_shared_workspace(share_token, current_user, db)
 
 
 @router.post("/share/{share_token}/join")

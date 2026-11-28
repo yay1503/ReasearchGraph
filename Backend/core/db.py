@@ -180,9 +180,17 @@ def init_db():
                     share_token TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                     role TEXT DEFAULT 'viewer',
+                    snapshot_json TEXT DEFAULT NULL,
+                    shared_by_name TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
+            )
+            cur.execute(
+                "ALTER TABLE workspace_shares ADD COLUMN IF NOT EXISTS snapshot_json TEXT DEFAULT NULL;"
+            )
+            cur.execute(
+                "ALTER TABLE workspace_shares ADD COLUMN IF NOT EXISTS shared_by_name TEXT DEFAULT '';"
             )
             cur.execute(
                 """

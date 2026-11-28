@@ -90,16 +90,8 @@ class ControllerDispatchRequest(BaseModel):
 
 
 class ShareCreateRequest(BaseModel):
-    role: str = "editor"
-
-
-class CollaboratorInviteRequest(BaseModel):
-    email: str
-    role: str = "editor"
-
-
-class ShareCreateRequest(BaseModel):
-    role: str = "editor"
+    role: str = "snapshot"
+    refresh: bool = False
 
 
 class CollaboratorInviteRequest(BaseModel):

@@ -170,10 +170,9 @@ export default function WorkspaceCanvas() {
   const [redirectFeedback, setRedirectFeedback] = useState('');
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
   const [isShareOpen, setIsShareOpen] = useState(false);
-  const [shareRole, setShareRole] = useState('editor');
   const [shareUrl, setShareUrl] = useState('');
-  const [collaborators, setCollaborators] = useState([]);
-  const [inviteEmail, setInviteEmail] = useState('');
+  const [shareMeta, setShareMeta] = useState(null);
+  const [isRefreshingShare, setIsRefreshingShare] = useState(false);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -738,46 +737,37 @@ export default function WorkspaceCanvas() {
     }
   };
 
-  const handleShareWorkspace = async (roleOverride) => {
+  const handleShareWorkspace = async (refresh = false) => {
     if (!workspaceId) return;
-    const roleToUse = roleOverride || shareRole;
+    if (refresh) setIsRefreshingShare(true);
     try {
-      const [shareRes, collabRes] = await Promise.all([
-        fetch(`${API}/workspaces/${workspaceId}/share`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: roleToUse }),
-        }),
-        fetch(`${API}/workspaces/${workspaceId}/collaborators`),
-      ]);
+      const token = localStorage.getItem('rg_token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const shareRes = await fetch(`${API}/workspaces/${workspaceId}/share`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ role: 'snapshot', refresh: Boolean(refresh) }),
+      });
+      if (!shareRes.ok) throw new Error('Share failed');
       const data = await shareRes.json();
-      const collabList = await collabRes.json();
-      setCollaborators(Array.isArray(collabList) ? collabList : []);
       const url = `${window.location.origin}/share/${data.share_token}`;
       setShareUrl(url);
+      setShareMeta({
+        nodeCount: data.snapshot_node_count ?? nodes.length,
+        logCount: data.snapshot_log_count ?? logs.length,
+        createdAt: data.created_at,
+      });
       setIsShareOpen(true);
       await navigator.clipboard?.writeText(url).catch(() => {});
+      if (refresh) {
+        setToast({ message: 'Created a fresh snapshot link and copied it!', type: 'success' });
+      }
     } catch {
-      setToast({ message: 'Could not load share settings.', type: 'error' });
-    }
-  };
-
-  const handleInviteCollaborator = async (e) => {
-    e.preventDefault();
-    if (!workspaceId || !inviteEmail.trim()) return;
-    try {
-      const res = await fetch(`${API}/workspaces/${workspaceId}/collaborators`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim(), role: 'editor' }),
-      });
-      if (!res.ok) throw new Error('Invite failed');
-      const added = await res.json();
-      setCollaborators((prev) => [added, ...prev.filter((c) => c.user_email !== added.user_email)]);
-      setInviteEmail('');
-      setToast({ message: `Invited ${added.user_email} as editor.`, type: 'success' });
-    } catch {
-      setToast({ message: 'Enter a valid email to invite collaborator.', type: 'error' });
+      setToast({ message: 'Could not create share snapshot.', type: 'error' });
+    } finally {
+      if (refresh) setIsRefreshingShare(false);
     }
   };
 
@@ -1382,8 +1372,8 @@ export default function WorkspaceCanvas() {
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={() => handleShareWorkspace()}
-            title="Share workspace or invite collaborators"
+            onClick={() => handleShareWorkspace(false)}
+            title="Share a snapshot copy of this workspace"
           >
             <Share2 size={15} strokeWidth={1.75} />
             <span>Share</span>
@@ -1692,7 +1682,7 @@ export default function WorkspaceCanvas() {
             </div>
           ))}
 
-          {/* Share & Collaborators Floating Card */}
+          {/* Share Snapshot Copy Floating Card */}
           {isShareOpen && (
             <div
               className="rg-card"
@@ -1700,41 +1690,37 @@ export default function WorkspaceCanvas() {
                 position: 'absolute',
                 right: '16px',
                 top: '16px',
-                width: '340px',
+                width: '360px',
                 zIndex: 26,
                 boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <strong style={{ fontSize: '13.5px' }}>Share & Collaborate</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <strong style={{ fontSize: '13.5px' }}>Share Research Copy</strong>
                 <button type="button" className="rg-inspector-close" onClick={() => setIsShareOpen(false)}>
                   <X size={13} />
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                <select
-                  className="rg-input"
-                  style={{ padding: '4px 8px', fontSize: '12px', maxWidth: '120px' }}
-                  value={shareRole}
-                  onChange={(e) => {
-                    setShareRole(e.target.value);
-                    handleShareWorkspace(e.target.value);
-                  }}
-                >
-                  <option value="editor">Can Edit</option>
-                  <option value="viewer">Read Only</option>
-                </select>
+              <p style={{ fontSize: '12px', opacity: 0.78, margin: '0 0 10px', lineHeight: 1.45 }}>
+                Anyone with this link can view a read-only snapshot of your graph and agent history, then click <strong>Continue</strong> to copy it into their own account. Your workspace stays private to you.
+              </p>
+              {shareMeta && (
+                <div style={{ fontSize: '11.5px', opacity: 0.72, marginBottom: '8px' }}>
+                  Snapshot: {shareMeta.nodeCount} nodes · {shareMeta.logCount} history items
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
                 <input
                   type="text"
                   readOnly
                   className="rg-input"
-                  style={{ padding: '4px 8px', fontSize: '11.5px' }}
+                  style={{ padding: '5px 8px', fontSize: '11.5px' }}
                   value={shareUrl}
                 />
                 <button
                   type="button"
                   className="rg-btn rg-btn-accent"
-                  style={{ padding: '4px 10px', fontSize: '11.5px' }}
+                  style={{ padding: '5px 10px', fontSize: '11.5px', whiteSpace: 'nowrap' }}
                   onClick={() => {
                     navigator.clipboard?.writeText(shareUrl);
                     setToast({ message: 'Share link copied!', type: 'success' });
@@ -1743,30 +1729,15 @@ export default function WorkspaceCanvas() {
                   Copy
                 </button>
               </div>
-              <form onSubmit={handleInviteCollaborator} style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                <input
-                  type="email"
-                  className="rg-input"
-                  style={{ padding: '4px 8px', fontSize: '12px' }}
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="Invite collaborator email..."
-                />
-                <button type="submit" className="rg-btn rg-btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }}>
-                  Invite
-                </button>
-              </form>
-              {collaborators.length > 0 && (
-                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.7 }}>Collaborators</span>
-                  {collaborators.map((c) => (
-                    <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                      <span>{c.user_email}</span>
-                      <span className="rg-node-badge">{c.role}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <button
+                type="button"
+                className="rg-btn rg-btn-secondary"
+                style={{ width: '100%', justifyContent: 'center', fontSize: '12px' }}
+                disabled={isRefreshingShare}
+                onClick={() => handleShareWorkspace(true)}
+              >
+                {isRefreshingShare ? 'Creating Snapshot...' : 'Create New Snapshot Link'}
+              </button>
             </div>
           )}
 

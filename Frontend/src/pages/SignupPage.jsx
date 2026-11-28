@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import AuthSplitLayout from '../components/AuthSplitLayout';
 import { syncUserWorkspace } from '../utils/auth';
@@ -8,6 +8,9 @@ const API = import.meta.env.VITE_API_URL || '/api';
 
 export default function SignupPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const rawNext = searchParams.get('next') || '';
+  const nextPath = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard';
 
   const [mood, setMood] = useState('idle');
   const [name, setName] = useState('');
@@ -66,7 +69,7 @@ export default function SignupPage() {
       localStorage.setItem('rg_token', data.token);
       localStorage.setItem('rg_user', JSON.stringify(data.user));
       await syncUserWorkspace(data.token);
-      navigate('/dashboard');
+      navigate(nextPath);
     } catch {
       setError('Could not connect to the authentication server.');
       setMood('sad');
@@ -197,7 +200,7 @@ export default function SignupPage() {
       <p className="rg-auth-footer">
         Already have an account?{' '}
         <Link
-          to="/login"
+          to={rawNext ? `/login?next=${encodeURIComponent(rawNext)}` : '/login'}
           className="rg-auth-link"
           onMouseEnter={() => setMood('happy')}
           onMouseLeave={() => setMood('idle')}

@@ -1,3 +1,4 @@
+import json
 import secrets
 import uuid
 
@@ -10,7 +11,7 @@ def list_user_workspaces(current_user: dict, db) -> list[dict]:
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT DISTINCT
+            SELECT
                 w.id,
                 w.name,
                 w.description,
@@ -18,12 +19,10 @@ def list_user_workspaces(current_user: dict, db) -> list[dict]:
                 w.created_at,
                 (SELECT COUNT(*) FROM nodes n WHERE n.workspace_id = w.id) AS node_count
             FROM workspaces w
-            LEFT JOIN workspace_collaborators wc
-                ON wc.workspace_id = w.id AND LOWER(wc.user_email) = LOWER(%s)
-            WHERE w.user_id = %s OR wc.id IS NOT NULL
+            WHERE w.user_id = %s
             ORDER BY w.created_at DESC
             """,
-            (current_user["email"], current_user["id"]),
+            (current_user["id"],),
         )
         return [dict(row) for row in cur.fetchall()]
 
@@ -185,32 +184,113 @@ def export_workspace_markdown(workspace_id: str, db) -> str:
     return "\n".join(lines)
 
 
-def create_workspace_share(workspace_id: str, role: str, db) -> dict:
-    clean_role = role if role in ("viewer", "editor") else "editor"
+def _build_workspace_snapshot(workspace_id: str, db) -> dict:
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id, name, description, created_at FROM workspaces WHERE id = %s",
+            (workspace_id,),
+        )
+        ws = cur.fetchone()
+        if ws is None:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        cur.execute(
+            "SELECT * FROM nodes WHERE workspace_id = %s ORDER BY created_at ASC",
+            (workspace_id,),
+        )
+        nodes = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT * FROM edges WHERE workspace_id = %s ORDER BY created_at ASC",
+            (workspace_id,),
+        )
+        edges = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT l.*, a.name AS agent_name
+            FROM agent_logs l
+            LEFT JOIN agents a ON l.agent_id = a.id
+            WHERE l.workspace_id = %s
+            ORDER BY l.created_at ASC, l.id ASC
+            """,
+            (workspace_id,),
+        )
+        agent_logs = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT * FROM research_memory WHERE workspace_id = %s ORDER BY created_at DESC",
+            (workspace_id,),
+        )
+        memory = [dict(r) for r in cur.fetchall()]
+
+    return {
+        "workspace": dict(ws),
+        "nodes": nodes,
+        "edges": edges,
+        "agent_logs": agent_logs,
+        "memory": memory,
+    }
+
+
+def create_workspace_share(
+    workspace_id: str,
+    role: str,
+    db,
+    refresh: bool = False,
+    current_user: dict | None = None,
+) -> dict:
+    clean_role = role if role in ("snapshot", "viewer", "editor") else "snapshot"
     with db.cursor() as cur:
         cur.execute("SELECT id, name FROM workspaces WHERE id = %s", (workspace_id,))
         ws = cur.fetchone()
         if ws is None:
             raise HTTPException(status_code=404, detail="Workspace not found")
-        cur.execute(
-            "SELECT share_token, role FROM workspace_shares WHERE workspace_id = %s AND role = %s ORDER BY created_at DESC LIMIT 1",
-            (workspace_id, clean_role),
-        )
-        existing = cur.fetchone()
-        if existing:
-            token = existing["share_token"]
-        else:
-            token = secrets.token_urlsafe(16)
+
+        if not refresh:
             cur.execute(
-                "INSERT INTO workspace_shares (share_token, workspace_id, role) VALUES (%s, %s, %s)",
-                (token, workspace_id, clean_role),
+                """
+                SELECT share_token, role, snapshot_json, shared_by_name, created_at
+                FROM workspace_shares
+                WHERE workspace_id = %s AND role = %s AND snapshot_json IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (workspace_id, clean_role),
             )
+            existing = cur.fetchone()
+            if existing:
+                snap = json.loads(existing["snapshot_json"])
+                return {
+                    "share_token": existing["share_token"],
+                    "role": existing["role"],
+                    "workspace_id": workspace_id,
+                    "workspace_name": ws["name"],
+                    "shared_by_name": existing.get("shared_by_name") or "",
+                    "snapshot_node_count": len(snap.get("nodes") or []),
+                    "snapshot_log_count": len(snap.get("agent_logs") or []),
+                    "created_at": str(existing["created_at"]),
+                }
+
+    snapshot = _build_workspace_snapshot(workspace_id, db)
+    token = secrets.token_urlsafe(16)
+    shared_by_name = (current_user or {}).get("name") or ""
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO workspace_shares (share_token, workspace_id, role, snapshot_json, shared_by_name)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING created_at
+            """,
+            (token, workspace_id, clean_role, json.dumps(snapshot, default=str), shared_by_name),
+        )
+        row = cur.fetchone()
     db.commit()
     return {
         "share_token": token,
         "role": clean_role,
         "workspace_id": workspace_id,
         "workspace_name": ws["name"],
+        "shared_by_name": shared_by_name,
+        "snapshot_node_count": len(snapshot["nodes"]),
+        "snapshot_log_count": len(snapshot["agent_logs"]),
+        "created_at": str(row["created_at"]),
     }
 
 
@@ -218,32 +298,192 @@ def get_shared_workspace(share_token: str, db) -> dict:
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT w.id, w.name, w.description, w.created_at, ws.role
+            SELECT ws.share_token, ws.workspace_id, ws.role, ws.snapshot_json, ws.shared_by_name, ws.created_at AS shared_at,
+                   w.id AS live_id, w.name AS live_name, w.description AS live_description, w.created_at AS live_created_at
             FROM workspace_shares ws
-            JOIN workspaces w ON ws.workspace_id = w.id
+            LEFT JOIN workspaces w ON ws.workspace_id = w.id
             WHERE ws.share_token = %s
             """,
             (share_token,),
         )
-        ws = cur.fetchone()
-        if ws is None:
+        row = cur.fetchone()
+        if row is None:
             raise HTTPException(status_code=404, detail="Share link not found or expired")
-        ws_id = ws["id"]
-        cur.execute("SELECT * FROM nodes WHERE workspace_id = %s ORDER BY created_at ASC", (ws_id,))
-        nodes = [dict(r) for r in cur.fetchall()]
-        cur.execute("SELECT * FROM edges WHERE workspace_id = %s ORDER BY created_at ASC", (ws_id,))
-        edges = [dict(r) for r in cur.fetchall()]
-        cur.execute(
-            "SELECT * FROM research_memory WHERE workspace_id = %s ORDER BY created_at DESC",
-            (ws_id,),
-        )
-        memory = [dict(r) for r in cur.fetchall()]
+
+    snapshot_raw = row.get("snapshot_json")
+    if snapshot_raw:
+        snap = json.loads(snapshot_raw)
+        return {
+            "workspace": snap.get("workspace") or {"id": row["workspace_id"], "name": row.get("live_name") or "Shared Research"},
+            "role": "snapshot",
+            "shared_by_name": row.get("shared_by_name") or "",
+            "shared_at": str(row.get("shared_at") or ""),
+            "nodes": snap.get("nodes") or [],
+            "edges": snap.get("edges") or [],
+            "agent_logs": snap.get("agent_logs") or [],
+            "memory": snap.get("memory") or [],
+        }
+
+    if not row.get("live_id"):
+        raise HTTPException(status_code=404, detail="Shared workspace no longer exists")
+
+    snap = _build_workspace_snapshot(row["live_id"], db)
     return {
-        "workspace": dict(ws),
-        "role": ws["role"],
-        "nodes": nodes,
-        "edges": edges,
-        "memory": memory,
+        "workspace": snap["workspace"],
+        "role": "snapshot",
+        "shared_by_name": row.get("shared_by_name") or "",
+        "shared_at": str(row.get("shared_at") or ""),
+        "nodes": snap["nodes"],
+        "edges": snap["edges"],
+        "agent_logs": snap["agent_logs"],
+        "memory": snap["memory"],
+    }
+
+
+def continue_shared_workspace(share_token: str, current_user: dict, db) -> dict:
+    """Clone a shared workspace snapshot into a new independent workspace owned by current_user."""
+    shared = get_shared_workspace(share_token, db)
+    src_ws = shared.get("workspace") or {}
+    base_name = (src_ws.get("name") or "Shared Research").strip()
+    new_name = base_name if base_name.endswith("(Copy)") else f"{base_name} (Copy)"
+    new_desc = src_ws.get("description") or ""
+    new_ws_id = uuid.uuid4().hex
+
+    src_nodes = shared.get("nodes") or []
+    src_edges = shared.get("edges") or []
+    src_logs = shared.get("agent_logs") or []
+    src_memory = shared.get("memory") or []
+
+    node_id_map = {n["id"]: uuid.uuid4().hex for n in src_nodes if n.get("id")}
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO workspaces (id, name, description, user_id) VALUES (%s, %s, %s, %s)",
+            (new_ws_id, new_name, new_desc, current_user["id"]),
+        )
+
+        # Insert nodes without group_id first so self-referential group_id updates never fail order checks
+        for n in src_nodes:
+            old_id = n.get("id")
+            if old_id not in node_id_map:
+                continue
+            cur.execute(
+                """
+                INSERT INTO nodes (id, workspace_id, type, title, url, content, metadata_json, tags_json, group_id, pos_x, pos_y)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)
+                """,
+                (
+                    node_id_map[old_id],
+                    new_ws_id,
+                    n.get("type") or "note",
+                    n.get("title") or "Untitled",
+                    n.get("url") or "",
+                    n.get("content") or "",
+                    n.get("metadata_json") or "{}",
+                    n.get("tags_json") or "[]",
+                    float(n.get("pos_x") or 0.0),
+                    float(n.get("pos_y") or 0.0),
+                ),
+            )
+
+        for n in src_nodes:
+            old_id = n.get("id")
+            old_group = n.get("group_id")
+            if old_id in node_id_map and old_group and old_group in node_id_map:
+                cur.execute(
+                    "UPDATE nodes SET group_id = %s WHERE id = %s",
+                    (node_id_map[old_group], node_id_map[old_id]),
+                )
+
+        for e in src_edges:
+            new_src = node_id_map.get(e.get("source_id"))
+            new_tgt = node_id_map.get(e.get("target_id"))
+            if not new_src or not new_tgt:
+                continue
+            cur.execute(
+                """
+                INSERT INTO edges (id, workspace_id, source_id, target_id, label, is_ai_suggested, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    uuid.uuid4().hex,
+                    new_ws_id,
+                    new_src,
+                    new_tgt,
+                    e.get("label") or "",
+                    bool(e.get("is_ai_suggested", False)),
+                    e.get("status") or "accepted",
+                ),
+            )
+
+        cur.execute("SELECT id FROM agents")
+        valid_agent_ids = {r["id"] for r in cur.fetchall()}
+
+        for log in src_logs:
+            agent_id = log.get("agent_id")
+            if agent_id not in valid_agent_ids:
+                agent_id = "agent_planner" if "agent_planner" in valid_agent_ids else next(iter(valid_agent_ids), None)
+            if not agent_id:
+                continue
+            mapped_node_id = node_id_map.get(log.get("node_id"))
+            cur.execute(
+                """
+                INSERT INTO agent_logs (workspace_id, agent_id, node_id, action, reasoning, payload_json, approval_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    new_ws_id,
+                    agent_id,
+                    mapped_node_id,
+                    log.get("action") or "",
+                    log.get("reasoning") or "",
+                    log.get("payload_json") or "{}",
+                    log.get("approval_status") or "auto",
+                ),
+            )
+
+        for mem in src_memory:
+            mapped_exp_id = node_id_map.get(mem.get("experiment_node_id"))
+            if not mapped_exp_id:
+                continue
+            agent_id = mem.get("agent_id")
+            if agent_id and agent_id not in valid_agent_ids:
+                agent_id = None
+            cur.execute(
+                """
+                INSERT INTO research_memory (workspace_id, experiment_node_id, agent_id, outcome, error_signature, resolution)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    new_ws_id,
+                    mapped_exp_id,
+                    agent_id,
+                    mem.get("outcome") or "success",
+                    mem.get("error_signature") or "",
+                    mem.get("resolution") or "",
+                ),
+            )
+
+        if "agent_planner" in valid_agent_ids:
+            cur.execute(
+                """
+                INSERT INTO agent_logs (workspace_id, agent_id, action, reasoning, approval_status)
+                VALUES (%s, 'agent_planner', %s, %s, 'auto')
+                """,
+                (
+                    new_ws_id,
+                    f"[CONTINUED COPY] Cloned '{base_name}'",
+                    f"Created an independent copy in {current_user['name']}'s account from shared snapshot.",
+                ),
+            )
+
+    db.commit()
+    return {
+        "workspace_id": new_ws_id,
+        "name": new_name,
+        "nodes_copied": len(node_id_map),
+        "edges_copied": len(src_edges),
+        "logs_copied": len(src_logs),
     }
 
 
