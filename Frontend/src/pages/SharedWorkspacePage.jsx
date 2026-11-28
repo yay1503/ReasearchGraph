@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CopyPlus, ExternalLink, GitBranch, History } from 'lucide-react';
+import { getStoredAuth } from '../utils/auth';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
@@ -69,7 +70,7 @@ export default function SharedWorkspacePage() {
   }
 
   const nodeTitleById = Object.fromEntries((data.nodes || []).map((n) => [n.id, n.title]));
-  const isLoggedIn = Boolean(localStorage.getItem('rg_token'));
+  const isLoggedIn = Boolean(getStoredAuth().token);
 
   return (
     <div style={{ maxWidth: '1040px', margin: '0 auto', padding: '32px 20px', fontFamily: 'Satoshi, sans-serif' }}>
@@ -111,8 +112,8 @@ export default function SharedWorkspacePage() {
             </span>
             <ArrowRight size={14} />
           </button>
-          <Link to="/" className="rg-btn rg-btn-secondary">
-            <ArrowLeft size={14} /> Home
+          <Link to={isLoggedIn ? '/dashboard' : '/'} className="rg-btn rg-btn-secondary">
+            <ArrowLeft size={14} /> {isLoggedIn ? 'Workspaces' : 'Home'}
           </Link>
         </div>
       </div>

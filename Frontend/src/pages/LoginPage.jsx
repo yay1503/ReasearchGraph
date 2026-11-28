@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
 import AuthSplitLayout from '../components/AuthSplitLayout';
-import { syncUserWorkspace } from '../utils/auth';
+import { syncUserWorkspace, verifyAndSyncSession } from '../utils/auth';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
@@ -11,6 +11,18 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const rawNext = searchParams.get('next') || '';
   const nextPath = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard';
+
+  useEffect(() => {
+    let cancelled = false;
+    verifyAndSyncSession().then((auth) => {
+      if (!cancelled && auth?.token) {
+        navigate(nextPath, { replace: true });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate, nextPath]);
 
   const [mood, setMood] = useState('idle');
   const [email, setEmail] = useState('');

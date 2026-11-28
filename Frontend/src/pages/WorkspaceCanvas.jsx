@@ -29,12 +29,14 @@ import {
   Star,
   AlertCircle,
   Bot,
+  ChevronDown,
   ExternalLink,
   FolderPlus,
   Hand,
   List,
   MessageSquare,
   Minus,
+  MoreHorizontal,
   MousePointer2,
   Plus,
   Tag,
@@ -54,6 +56,7 @@ import ActionModal from '../components/ActionModal';
 import EngineModal from '../components/EngineModal';
 import { getNodeColor, getNodeTypeStyle } from '../nodeStyles';
 import { PROVIDERS, getLLMConfig, getLLMHeaders } from '../utils/llmConfig';
+import { getStoredAuth } from '../utils/auth';
 import { useTheme } from '../utils/theme';
 
 const API = import.meta.env.VITE_API_URL || '/api';
@@ -173,6 +176,25 @@ export default function WorkspaceCanvas() {
   const [shareUrl, setShareUrl] = useState('');
   const [shareMeta, setShareMeta] = useState(null);
   const [isRefreshingShare, setIsRefreshingShare] = useState(false);
+  const [openTopMenu, setOpenTopMenu] = useState(null);
+
+  useEffect(() => {
+    if (!openTopMenu) return undefined;
+    const handlePointerDown = (e) => {
+      if (!e.target.closest('.rg-topbar-dropdown')) {
+        setOpenTopMenu(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setOpenTopMenu(null);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openTopMenu]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -1167,7 +1189,11 @@ export default function WorkspaceCanvas() {
       {/* Top Bar */}
       <header className="rg-topbar">
         <div className="rg-topbar-group">
-          <Link to="/" className="rg-brand rg-brand-link">
+          <Link
+            to={getStoredAuth().token ? '/dashboard' : '/'}
+            className="rg-brand rg-brand-link"
+            title={getStoredAuth().token ? 'Go to Your Workspaces' : 'ResearchGraph Home'}
+          >
             ResearchGraph
           </Link>
           <Link
@@ -1175,51 +1201,84 @@ export default function WorkspaceCanvas() {
             className="rg-back-link"
             title="Back to Workspaces"
           >
-            <ArrowLeft size={14} strokeWidth={1.75} />
+            <ArrowLeft size={14} strokeWidth={1.6} />
             <span>Workspaces</span>
           </Link>
           <span className="rg-divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={() => setModalMode('paper')}
-          >
-            <FileText size={15} strokeWidth={1.75} />
-            <span>+ Paper</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={() => setModalMode('question')}
-          >
-            <HelpCircle size={15} strokeWidth={1.75} />
-            <span>+ Question</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={() => setModalMode('note')}
-          >
-            <StickyNote size={15} strokeWidth={1.75} />
-            <span>+ Note</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={() => setModalMode('group')}
-          >
-            <FolderPlus size={15} strokeWidth={1.75} />
-            <span>+ Group</span>
-          </button>
-          <span className="rg-divider" aria-hidden="true" />
+
+          <div className="rg-topbar-dropdown">
+            <button
+              type="button"
+              className="rg-btn rg-btn-secondary"
+              onClick={() => setOpenTopMenu((prev) => (prev === 'add' ? null : 'add'))}
+              aria-expanded={openTopMenu === 'add'}
+            >
+              <Plus size={15} strokeWidth={1.6} />
+              <span>Add</span>
+              <ChevronDown size={13} strokeWidth={1.6} />
+            </button>
+            {openTopMenu === 'add' && (
+              <div className="rg-topbar-menu is-left" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('paper');
+                  }}
+                >
+                  <FileText size={15} strokeWidth={1.6} />
+                  <span>Paper</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('question');
+                  }}
+                >
+                  <HelpCircle size={15} strokeWidth={1.6} />
+                  <span>Question</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('note');
+                  }}
+                >
+                  <StickyNote size={15} strokeWidth={1.6} />
+                  <span>Note</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('group');
+                  }}
+                >
+                  <FolderPlus size={15} strokeWidth={1.6} />
+                  <span>Group</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="rg-search-wrap" style={{ position: 'relative' }}>
-            <Search size={14} strokeWidth={1.75} className="rg-search-icon" aria-hidden="true" />
+            <Search size={14} strokeWidth={1.6} className="rg-search-icon" aria-hidden="true" />
             <input
               type="text"
               className="rg-search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search nodes or #tags..."
+              placeholder="Search"
               aria-label="Search nodes"
             />
             {searchQuery && (
@@ -1285,133 +1344,209 @@ export default function WorkspaceCanvas() {
               </div>
             )}
           </div>
-          <div style={{ display: 'inline-flex', gap: '4px' }} role="group" aria-label="View Modes">
-            {[
-              { id: 'graph', label: 'Graph', Icon: GitBranch },
-              { id: 'topic', label: 'Topic', Icon: Tag },
-              { id: 'grid', label: 'Grid', Icon: List },
-            ].map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                type="button"
-                className={`rg-btn ${viewMode === id ? 'rg-btn-accent' : 'rg-btn-secondary'}`}
-                onClick={() => setViewMode(id)}
-                style={{ padding: '6px 9px', fontSize: '12px' }}
-              >
-                <Icon size={13} />
-                <span>{label}</span>
-              </button>
-            ))}
-          </div>
+        </div>
+
+        <div className="rg-view-switch" role="group" aria-label="View Modes">
+          {[
+            { id: 'graph', label: 'Graph', Icon: GitBranch },
+            { id: 'topic', label: 'Topic', Icon: Tag },
+            { id: 'grid', label: 'Grid', Icon: List },
+          ].map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`rg-view-switch-btn ${viewMode === id ? 'is-active' : ''}`}
+              onClick={() => setViewMode(id)}
+            >
+              <Icon size={13} strokeWidth={1.6} />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
 
         <div className="rg-topbar-group">
           <button
             type="button"
             className="rg-btn rg-btn-accent"
-            onClick={() => setModalMode('harness')}
+            onClick={() => {
+              setOpenTopMenu(null);
+              setModalMode('harness');
+            }}
           >
-            <Bot size={15} strokeWidth={1.75} />
+            <Bot size={15} strokeWidth={1.6} />
             <span>Agent Harness</span>
           </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-accent"
-            onClick={runAnalyze}
-            disabled={isAnalyzing}
-          >
-            <Sparkles size={15} strokeWidth={1.75} />
-            <span>{isAnalyzing ? 'Analyzing...' : 'Analyze & Cluster'}</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-accent"
-            onClick={requestExperiment}
-            disabled={isRunningExperiment}
-          >
-            <FlaskConical size={15} strokeWidth={1.75} />
-            <span>{isRunningExperiment ? 'Requesting...' : 'Run Reproduction'}</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-accent"
-            onClick={() => setModalMode('what_if')}
-            disabled={isRunningWhatIf}
-          >
-            <GitBranch size={15} strokeWidth={1.75} />
-            <span>{isRunningWhatIf ? 'Running...' : 'Ask "What If"'}</span>
-          </button>
+
+          <div className="rg-topbar-dropdown">
+            <button
+              type="button"
+              className="rg-btn rg-btn-secondary"
+              onClick={() => setOpenTopMenu((prev) => (prev === 'run' ? null : 'run'))}
+              aria-expanded={openTopMenu === 'run'}
+            >
+              <FlaskConical size={15} strokeWidth={1.6} />
+              <span>Run</span>
+              <ChevronDown size={13} strokeWidth={1.6} />
+            </button>
+            {openTopMenu === 'run' && (
+              <div className="rg-topbar-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={isAnalyzing}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    runAnalyze();
+                  }}
+                >
+                  <Sparkles size={15} strokeWidth={1.6} />
+                  <span>{isAnalyzing ? 'Analyzing...' : 'Analyze & Cluster'}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={isRunningExperiment}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    requestExperiment();
+                  }}
+                >
+                  <FlaskConical size={15} strokeWidth={1.6} />
+                  <span>{isRunningExperiment ? 'Requesting...' : 'Run Reproduction'}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={isRunningWhatIf}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('what_if');
+                  }}
+                >
+                  <GitBranch size={15} strokeWidth={1.6} />
+                  <span>{isRunningWhatIf ? 'Running...' : 'Ask "What If"'}</span>
+                </button>
+                <div className="rg-topbar-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    setModalMode('sandbox');
+                  }}
+                >
+                  <Terminal size={15} strokeWidth={1.6} />
+                  <span>Sandbox Experiment</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={isSuggesting}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    handleSuggestNext();
+                  }}
+                >
+                  <Lightbulb size={15} strokeWidth={1.6} />
+                  <span>{isSuggesting ? 'Thinking...' : 'Suggest Next Exp'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={() => setModalMode('sandbox')}
-            title="Generate and run an isolated Python experiment informed by Research Memory"
-          >
-            <Terminal size={15} strokeWidth={1.75} />
-            <span>Sandbox</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={handleSuggestNext}
-            disabled={isSuggesting}
-            title="Suggest next best experiments from graph + research_memory"
-          >
-            <Lightbulb size={15} strokeWidth={1.75} />
-            <span>{isSuggesting ? 'Thinking...' : 'Next Exp'}</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={handleOpenTimeline}
-            title="Replayable graph evolution timeline"
-          >
-            <History size={15} strokeWidth={1.75} />
-            <span>Timeline</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={() => handleShareWorkspace(false)}
+            onClick={() => {
+              setOpenTopMenu(null);
+              handleShareWorkspace(false);
+            }}
             title="Share a snapshot copy of this workspace"
           >
-            <Share2 size={15} strokeWidth={1.75} />
+            <Share2 size={15} strokeWidth={1.6} />
             <span>Share</span>
           </button>
+
+          <div className="rg-topbar-dropdown">
+            <button
+              type="button"
+              className="rg-btn rg-btn-secondary rg-btn-icon"
+              onClick={() => setOpenTopMenu((prev) => (prev === 'more' ? null : 'more'))}
+              aria-expanded={openTopMenu === 'more'}
+              aria-label="Workspace actions"
+              title="Workspace actions"
+            >
+              <MoreHorizontal size={16} strokeWidth={1.6} />
+            </button>
+            {openTopMenu === 'more' && (
+              <div className="rg-topbar-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    handleOpenTimeline();
+                  }}
+                >
+                  <History size={15} strokeWidth={1.6} />
+                  <span>Timeline</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={nodes.length === 0 || isTidyingLayout}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    autoLayout();
+                  }}
+                >
+                  <LayoutGrid size={15} strokeWidth={1.6} />
+                  <span>Auto-Layout</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    exportWorkspace();
+                  }}
+                >
+                  <Download size={15} strokeWidth={1.6} />
+                  <span>Export Markdown</span>
+                </button>
+                <div className="rg-topbar-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rg-topbar-menu-item"
+                  disabled={isResettingDemo}
+                  onClick={() => {
+                    setOpenTopMenu(null);
+                    resetDemo();
+                  }}
+                >
+                  <RotateCcw size={15} strokeWidth={1.6} />
+                  <span>{isResettingDemo ? 'Resetting...' : 'Reset Demo'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {(isOffline || offlineQueueCount > 0) && (
             <span className="rg-log-pill rg-log-pill-pending" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <WifiOff size={11} /> {isOffline ? 'Offline' : 'Syncing'} ({offlineQueueCount} queued)
+              <WifiOff size={11} /> {isOffline ? 'Offline' : 'Syncing'} ({offlineQueueCount})
             </span>
           )}
+
           <span className="rg-divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={autoLayout}
-            disabled={nodes.length === 0 || isTidyingLayout}
-            title="Arrange nodes in clean non-overlapping rows"
-          >
-            <LayoutGrid size={15} strokeWidth={1.75} />
-            <span>Auto-Layout</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={resetDemo}
-            disabled={isResettingDemo}
-            title="Create a fresh SMOTE demo workspace"
-          >
-            <RotateCcw size={15} strokeWidth={1.75} />
-            <span>{isResettingDemo ? 'Resetting...' : 'Reset Demo'}</span>
-          </button>
-          <button
-            type="button"
-            className="rg-btn rg-btn-secondary"
-            onClick={exportWorkspace}
-          >
-            <Download size={15} strokeWidth={1.75} />
-            <span>Export MD</span>
-          </button>
           <button
             type="button"
             className="rg-btn rg-btn-secondary rg-engine-pill-btn"
@@ -1419,7 +1554,7 @@ export default function WorkspaceCanvas() {
             title="Configure AI Engine"
           >
             <span className="rg-engine-pill-dot" aria-hidden="true" />
-            <Cpu size={13} strokeWidth={1.85} aria-hidden="true" />
+            <Cpu size={14} strokeWidth={1.6} aria-hidden="true" />
             <span>{PROVIDERS[llmConfig.provider]?.shortLabel || 'Local Llama'}</span>
           </button>
           <button
@@ -1430,9 +1565,9 @@ export default function WorkspaceCanvas() {
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {theme === 'dark' ? (
-              <Sun size={15} strokeWidth={1.75} />
+              <Sun size={15} strokeWidth={1.6} />
             ) : (
-              <Moon size={15} strokeWidth={1.75} />
+              <Moon size={15} strokeWidth={1.6} />
             )}
           </button>
         </div>
@@ -1889,7 +2024,11 @@ export default function WorkspaceCanvas() {
 
               <div className="rg-inspector-body">
                 {inspectorDetails.prose && (
-                  <p className="rg-inspector-prose">{inspectorDetails.prose}</p>
+                  inspectorType === 'code' || inspectorType === 'experiment' ? (
+                    <pre className="rg-inspector-code">{inspectorDetails.prose}</pre>
+                  ) : (
+                    <p className="rg-inspector-prose">{inspectorDetails.prose}</p>
+                  )
                 )}
 
                 {inspectorDetails.metrics && (
@@ -2078,6 +2217,7 @@ export default function WorkspaceCanvas() {
                           {log.payload_json && log.payload_json !== '{}' && (
                             <pre
                               style={{
+                                fontFamily: 'var(--font-mono)',
                                 fontSize: '11px',
                                 background: 'rgba(127,127,127,0.1)',
                                 padding: '6px 8px',
@@ -2163,7 +2303,7 @@ export default function WorkspaceCanvas() {
                   className="rg-card"
                   style={{ marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}
                 >
-                  <div style={{ fontSize: '11.5px', fontWeight: 600 }}>Spawn Specialist Agent</div>
+                  <div style={{ fontSize: '12px', fontWeight: 400 }}>Spawn Specialist Agent</div>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input
                       type="text"

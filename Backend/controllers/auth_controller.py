@@ -1,11 +1,26 @@
-import secrets
+import hashlib
+import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
+import jwt
 from fastapi import Depends, Header, HTTPException
 import psycopg2
 
 from core.db import get_db, hash_password, verify_password
 from models.schemas import LoginRequest, SignupRequest
+
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_DAYS = 7
+
+
+def _get_jwt_secret() -> str:
+    explicit = (os.getenv("JWT_SECRET") or "").strip()
+    if explicit:
+        return explicit
+    # Derive a deterministic secret across uvicorn --reload restarts when JWT_SECRET is unset
+    seed = os.getenv("DATABASE_URL") or "researchgraph-local-dev-jwt-secret"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def _parse_bearer_token(authorization: str | None) -> str | None:
@@ -24,14 +39,47 @@ def _extract_bearer_token(authorization: str | None = Header(default=None)) -> s
     return token
 
 
+def _decode_jwt(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+
+
 def _lookup_user_by_token(token: str, db) -> dict | None:
+    payload = _decode_jwt(token)
+    if payload is not None:
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT u.id, u.name, u.email, s.token AS session_token, s.expires_at
+                FROM users u
+                LEFT JOIN sessions s ON s.token = %s AND s.user_id = u.id
+                WHERE u.id = %s
+                """,
+                (token, user_id),
+            )
+            row = cur.fetchone()
+        if row is None or row["session_token"] is None:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "exp": payload.get("exp"),
+        }
+
+    # Backward-compatible lookup for legacy opaque session tokens
     with db.cursor() as cur:
         cur.execute(
             """
             SELECT u.id, u.name, u.email
             FROM sessions s
             JOIN users u ON s.user_id = u.id
-            WHERE s.token = %s
+            WHERE s.token = %s AND (s.expires_at IS NULL OR s.expires_at > CURRENT_TIMESTAMP)
             """,
             (token,),
         )
@@ -61,14 +109,27 @@ def get_optional_user(
     return _lookup_user_by_token(token, db)
 
 
-def _create_session(user_id: str, db) -> str:
-    token = secrets.token_urlsafe(32)
+def _create_session(user_id: str, name: str, email: str, db) -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=JWT_EXPIRY_DAYS)
+    payload = {
+        "sub": user_id,
+        "name": name,
+        "email": email,
+        "jti": uuid.uuid4().hex,
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    token = jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO sessions (token, user_id) VALUES (%s, %s)",
-            (token, user_id),
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (%s, %s, %s)",
+            (token, user_id, expires_at.replace(tzinfo=None)),
         )
-    return token
+    return token, expires_at.isoformat()
 
 
 def signup_user(body: SignupRequest, db) -> dict:
@@ -98,7 +159,7 @@ def signup_user(body: SignupRequest, db) -> dict:
                 """,
                 (user_id, name, email, pw_hash),
             )
-        token = _create_session(user_id, db)
+        token, expires_at = _create_session(user_id, name, email, db)
         db.commit()
     except psycopg2.IntegrityError:
         db.rollback()
@@ -106,6 +167,8 @@ def signup_user(body: SignupRequest, db) -> dict:
 
     return {
         "token": token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
         "user": {"id": user_id, "name": name, "email": email},
     }
 
@@ -122,10 +185,12 @@ def login_user(body: LoginRequest, db) -> dict:
     if user is None or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = _create_session(user["id"], db)
+    token, expires_at = _create_session(user["id"], user["name"], user["email"], db)
     db.commit()
     return {
         "token": token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
         "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
     }
 
@@ -141,10 +206,12 @@ def demo_login_user(db) -> dict:
     if user is None:
         raise HTTPException(status_code=404, detail="Demo account not found")
 
-    token = _create_session(user["id"], db)
+    token, expires_at = _create_session(user["id"], user["name"], user["email"], db)
     db.commit()
     return {
         "token": token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
         "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
     }
 
