@@ -186,6 +186,18 @@ def init_db():
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS workspace_collaborators (
+                    id SERIAL PRIMARY KEY,
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    user_email TEXT NOT NULL,
+                    role TEXT DEFAULT 'editor' CHECK (role IN ('viewer', 'editor')),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (workspace_id, user_email)
+                );
+                """
+            )
+            cur.execute(
+                """
                 INSERT INTO agents (id, name, role) VALUES
                     ('agent_reader', 'Reader Agent', 'reader'),
                     ('agent_clusterer', 'Clusterer Agent', 'clusterer'),

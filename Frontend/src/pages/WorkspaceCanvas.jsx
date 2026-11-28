@@ -168,6 +168,12 @@ export default function WorkspaceCanvas() {
   const [isPlayingTimeline, setIsPlayingTimeline] = useState(false);
   const [redirectLogId, setRedirectLogId] = useState(null);
   const [redirectFeedback, setRedirectFeedback] = useState('');
+  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [shareRole, setShareRole] = useState('editor');
+  const [shareUrl, setShareUrl] = useState('');
+  const [collaborators, setCollaborators] = useState([]);
+  const [inviteEmail, setInviteEmail] = useState('');
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -175,13 +181,32 @@ export default function WorkspaceCanvas() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // Delete a node from SQLite/PostgreSQL and remove it (+ its connected edges) from the canvas
-  const deleteNode = useCallback(async (nodeId) => {
-    await fetch(`${API}/nodes/${nodeId}`, { method: 'DELETE' });
-    setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-    setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
-    setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
+  const queueOfflineMutation = useCallback((wsId, mutation) => {
+    if (!wsId) return;
+    const key = `rg_offline_queue_${wsId}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    const next = [...existing, mutation];
+    localStorage.setItem(key, JSON.stringify(next));
+    setOfflineQueueCount(next.length);
   }, []);
+
+  // Delete a node from PostgreSQL (or queue offline) and remove from canvas
+  const deleteNode = useCallback(
+    async (nodeId) => {
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+      setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
+      try {
+        if (!navigator.onLine) throw new Error('offline');
+        await fetch(`${API}/nodes/${nodeId}`, { method: 'DELETE' });
+      } catch {
+        if (workspaceId && !String(nodeId).startsWith('offline_')) {
+          queueOfflineMutation(workspaceId, { op: 'delete_node', nodeId });
+        }
+      }
+    },
+    [workspaceId, queueOfflineMutation]
+  );
 
   // Helper to format a DB node into a custom ResearchNode
   const formatNode = useCallback(
@@ -251,13 +276,49 @@ export default function WorkspaceCanvas() {
     [formatNode]
   );
 
-  // Offline-first listener & automatic sync on reconnect
+  // Offline-first listener & automatic mutation queue sync on reconnect
   useEffect(() => {
+    if (workspaceId) {
+      const existing = JSON.parse(localStorage.getItem(`rg_offline_queue_${workspaceId}`) || '[]');
+      setOfflineQueueCount(existing.length);
+    }
+
+    const flushOfflineQueue = async (wsId) => {
+      const key = `rg_offline_queue_${wsId}`;
+      const queue = JSON.parse(localStorage.getItem(key) || '[]');
+      if (queue.length === 0) return;
+      for (const item of queue) {
+        try {
+          if (item.op === 'create_node') {
+            await fetch(`${API}/nodes`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item.payload),
+            });
+          } else if (item.op === 'patch_node') {
+            await fetch(`${API}/nodes/${item.nodeId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item.payload),
+            });
+          } else if (item.op === 'delete_node') {
+            await fetch(`${API}/nodes/${item.nodeId}`, { method: 'DELETE' });
+          }
+        } catch {
+          // Keep going for remaining items
+        }
+      }
+      localStorage.removeItem(key);
+      setOfflineQueueCount(0);
+      setToast({ message: `Synced ${queue.length} offline edit(s) to server.`, type: 'success' });
+    };
+
     const goOffline = () => setIsOffline(true);
-    const goOnline = () => {
+    const goOnline = async () => {
       setIsOffline(false);
       if (workspaceId) {
-        refreshGraph(workspaceId);
+        await flushOfflineQueue(workspaceId);
+        await refreshGraph(workspaceId);
       }
     };
     window.addEventListener('offline', goOffline);
@@ -493,23 +554,33 @@ export default function WorkspaceCanvas() {
       } else {
         const pos_x = Math.floor(Math.random() * 400) + 50;
         const pos_y = Math.floor(Math.random() * 300) + 50;
+        const nodePayload = {
+          workspace_id: workspaceId,
+          type: modalMode,
+          title,
+          url: url || '',
+          content: content || '',
+          tags_json: JSON.stringify(Array.isArray(tags) ? tags : []),
+          pos_x,
+          pos_y,
+        };
 
-        const res = await fetch(`${API}/nodes`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            workspace_id: workspaceId,
-            type: modalMode,
-            title,
-            url: url || '',
-            content: content || '',
-            tags_json: JSON.stringify(Array.isArray(tags) ? tags : []),
-            pos_x,
-            pos_y,
-          }),
-        });
-        const saved = await res.json();
-        setNodes((nds) => [...nds, formatNode(saved)]);
+        try {
+          if (!navigator.onLine) throw new Error('offline');
+          const res = await fetch(`${API}/nodes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(nodePayload),
+          });
+          if (!res.ok) throw new Error('Failed');
+          const saved = await res.json();
+          setNodes((nds) => [...nds, formatNode(saved)]);
+        } catch {
+          const tempId = `offline_${Date.now()}`;
+          setNodes((nds) => [...nds, formatNode({ id: tempId, ...nodePayload })]);
+          queueOfflineMutation(workspaceId, { op: 'create_node', payload: nodePayload });
+          setToast({ message: 'Saved node offline — will sync when online.', type: 'success' });
+        }
       }
       setModalMode(null);
     } catch {
@@ -520,9 +591,10 @@ export default function WorkspaceCanvas() {
     }
   };
 
-  // Update node tags, group_id, or metadata comments via PATCH /nodes/{id}
+  // Update node tags, group_id, or metadata comments via PATCH /nodes/{id} (with offline queue)
   const patchNode = async (nodeId, payload) => {
     try {
+      if (!navigator.onLine) throw new Error('offline');
       const res = await fetch(`${API}/nodes/${nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -534,7 +606,29 @@ export default function WorkspaceCanvas() {
       setNodes((nds) => nds.map((n) => (n.id === nodeId ? formatted : n)));
       setSelectedNode((prev) => (prev?.id === nodeId ? formatted : prev));
     } catch {
-      setToast({ message: 'Failed to update node.', type: 'error' });
+      if (!navigator.onLine && workspaceId) {
+        queueOfflineMutation(workspaceId, { op: 'patch_node', nodeId, payload });
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== nodeId) return n;
+            const nextMeta = payload.metadata_json ?? n.data.metadata;
+            const metaObj = tryParseJsonObject(nextMeta) || {};
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                tags: payload.tags_json ? tryParseJsonArray(payload.tags_json) : n.data.tags,
+                groupId: 'group_id' in payload ? payload.group_id || '' : n.data.groupId,
+                metadata: nextMeta,
+                commentsCount: Array.isArray(metaObj.comments) ? metaObj.comments.length : n.data.commentsCount,
+              },
+            };
+          })
+        );
+        setToast({ message: 'Update queued offline.', type: 'success' });
+      } else {
+        setToast({ message: 'Failed to update node.', type: 'error' });
+      }
     }
   };
 
@@ -644,16 +738,46 @@ export default function WorkspaceCanvas() {
     }
   };
 
-  const handleShareWorkspace = async () => {
+  const handleShareWorkspace = async (roleOverride) => {
     if (!workspaceId) return;
+    const roleToUse = roleOverride || shareRole;
     try {
-      const res = await fetch(`${API}/workspaces/${workspaceId}/share`, { method: 'POST' });
-      const data = await res.json();
+      const [shareRes, collabRes] = await Promise.all([
+        fetch(`${API}/workspaces/${workspaceId}/share`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: roleToUse }),
+        }),
+        fetch(`${API}/workspaces/${workspaceId}/collaborators`),
+      ]);
+      const data = await shareRes.json();
+      const collabList = await collabRes.json();
+      setCollaborators(Array.isArray(collabList) ? collabList : []);
       const url = `${window.location.origin}/share/${data.share_token}`;
-      await navigator.clipboard?.writeText(url);
-      setToast({ message: `Share link copied: /share/${data.share_token}`, type: 'success' });
+      setShareUrl(url);
+      setIsShareOpen(true);
+      await navigator.clipboard?.writeText(url).catch(() => {});
     } catch {
-      setToast({ message: 'Could not generate share link.', type: 'error' });
+      setToast({ message: 'Could not load share settings.', type: 'error' });
+    }
+  };
+
+  const handleInviteCollaborator = async (e) => {
+    e.preventDefault();
+    if (!workspaceId || !inviteEmail.trim()) return;
+    try {
+      const res = await fetch(`${API}/workspaces/${workspaceId}/collaborators`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: 'editor' }),
+      });
+      if (!res.ok) throw new Error('Invite failed');
+      const added = await res.json();
+      setCollaborators((prev) => [added, ...prev.filter((c) => c.user_email !== added.user_email)]);
+      setInviteEmail('');
+      setToast({ message: `Invited ${added.user_email} as editor.`, type: 'success' });
+    } catch {
+      setToast({ message: 'Enter a valid email to invite collaborator.', type: 'error' });
     }
   };
 
@@ -954,12 +1078,19 @@ export default function WorkspaceCanvas() {
     [viewMode, topicFilter]
   );
 
+  const timelineVisibleIds = useMemo(() => {
+    if (!timelineData) return null;
+    return new Set((timelineData.nodes || []).slice(0, timelineStep).map((n) => n.id));
+  }, [timelineData, timelineStep]);
+
   const displayedNodes = useMemo(() => {
     return nodes.map((node) => {
       const groupTitle = node.data?.groupId ? groupTitleMap.get(node.data.groupId) || '' : '';
       const matches = nodeMatchesSearch(node) && nodeMatchesTopic(node);
+      const hiddenByTimeline = timelineVisibleIds ? !timelineVisibleIds.has(node.id) : false;
       return {
         ...node,
+        hidden: hiddenByTimeline,
         data: {
           ...node.data,
           groupTitle,
@@ -972,7 +1103,7 @@ export default function WorkspaceCanvas() {
         },
       };
     });
-  }, [nodes, groupTitleMap, normalizedQuery, nodeMatchesSearch, nodeMatchesTopic]);
+  }, [nodes, groupTitleMap, normalizedQuery, nodeMatchesSearch, nodeMatchesTopic, timelineVisibleIds]);
 
   const displayedEdges = useMemo(() => {
     const isDark = theme === 'dark';
@@ -993,8 +1124,12 @@ export default function WorkspaceCanvas() {
     return edges.map((edge) => {
       const isAi = Boolean(edge.data?.isAiSuggested);
       const strokeColor = isDark ? '#71717A' : '#6B7280';
+      const hiddenByTimeline = timelineVisibleIds
+        ? !timelineVisibleIds.has(edge.source) || !timelineVisibleIds.has(edge.target)
+        : false;
       return {
         ...edge,
+        hidden: hiddenByTimeline,
         type: 'default',
         animated: isAi,
         markerEnd: {
@@ -1011,7 +1146,7 @@ export default function WorkspaceCanvas() {
         ...labelProps,
       };
     });
-  }, [edges, theme]);
+  }, [edges, theme, timelineVisibleIds]);
 
   const hasPendingApproval = useMemo(
     () => logs.some((log) => log.approval_status === 'pending'),
@@ -1247,15 +1382,15 @@ export default function WorkspaceCanvas() {
           <button
             type="button"
             className="rg-btn rg-btn-secondary"
-            onClick={handleShareWorkspace}
-            title="Generate & copy collaborator share link"
+            onClick={() => handleShareWorkspace()}
+            title="Share workspace or invite collaborators"
           >
             <Share2 size={15} strokeWidth={1.75} />
             <span>Share</span>
           </button>
-          {isOffline && (
+          {(isOffline || offlineQueueCount > 0) && (
             <span className="rg-log-pill rg-log-pill-pending" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <WifiOff size={11} /> Offline Cache
+              <WifiOff size={11} /> {isOffline ? 'Offline' : 'Syncing'} ({offlineQueueCount} queued)
             </span>
           )}
           <span className="rg-divider" aria-hidden="true" />
@@ -1556,6 +1691,84 @@ export default function WorkspaceCanvas() {
               </div>
             </div>
           ))}
+
+          {/* Share & Collaborators Floating Card */}
+          {isShareOpen && (
+            <div
+              className="rg-card"
+              style={{
+                position: 'absolute',
+                right: '16px',
+                top: '16px',
+                width: '340px',
+                zIndex: 26,
+                boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <strong style={{ fontSize: '13.5px' }}>Share & Collaborate</strong>
+                <button type="button" className="rg-inspector-close" onClick={() => setIsShareOpen(false)}>
+                  <X size={13} />
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                <select
+                  className="rg-input"
+                  style={{ padding: '4px 8px', fontSize: '12px', maxWidth: '120px' }}
+                  value={shareRole}
+                  onChange={(e) => {
+                    setShareRole(e.target.value);
+                    handleShareWorkspace(e.target.value);
+                  }}
+                >
+                  <option value="editor">Can Edit</option>
+                  <option value="viewer">Read Only</option>
+                </select>
+                <input
+                  type="text"
+                  readOnly
+                  className="rg-input"
+                  style={{ padding: '4px 8px', fontSize: '11.5px' }}
+                  value={shareUrl}
+                />
+                <button
+                  type="button"
+                  className="rg-btn rg-btn-accent"
+                  style={{ padding: '4px 10px', fontSize: '11.5px' }}
+                  onClick={() => {
+                    navigator.clipboard?.writeText(shareUrl);
+                    setToast({ message: 'Share link copied!', type: 'success' });
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+              <form onSubmit={handleInviteCollaborator} style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                <input
+                  type="email"
+                  className="rg-input"
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="Invite collaborator email..."
+                />
+                <button type="submit" className="rg-btn rg-btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }}>
+                  Invite
+                </button>
+              </form>
+              {collaborators.length > 0 && (
+                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.7 }}>Collaborators</span>
+                  {collaborators.map((c) => (
+                    <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                      <span>{c.user_email}</span>
+                      <span className="rg-node-badge">{c.role}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Suggest Next Best Experiment Floating Card */}
           {nextSuggestions && (

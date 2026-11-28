@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, ExternalLink, Edit3 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
 export default function SharedWorkspacePage() {
   const { token } = useParams();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/share/${token}`)
@@ -18,6 +20,29 @@ export default function SharedWorkspacePage() {
       .then(setData)
       .catch((err) => setError(err.message));
   }, [token]);
+
+  const handleJoinAndEdit = async () => {
+    const authToken = localStorage.getItem('rg_token');
+    if (!authToken) {
+      navigate('/login');
+      return;
+    }
+    setIsJoining(true);
+    try {
+      const res = await fetch(`${API}/share/${token}/join`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) throw new Error('Join failed');
+      const joined = await res.json();
+      localStorage.setItem('rg_workspace_id', joined.workspace_id);
+      navigate(`/workspace/${joined.workspace_id}`);
+    } catch {
+      setError('Please sign in again to join this shared workspace.');
+    } finally {
+      setIsJoining(false);
+    }
+  };
 
   if (error) {
     return (
@@ -38,16 +63,33 @@ export default function SharedWorkspacePage() {
     );
   }
 
+  const isEditor = data.role === 'editor';
+
   return (
     <div style={{ maxWidth: '1040px', margin: '0 auto', padding: '32px 20px', fontFamily: 'Satoshi, sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', gap: '12px', flexWrap: 'wrap' }}>
         <div>
-          <span className="rg-node-badge" data-node-type="group">SHARED WORKSPACE (READ-ONLY)</span>
+          <span className="rg-node-badge" data-node-type="group">
+            {isEditor ? 'SHARED WORKSPACE (EDITABLE)' : 'SHARED WORKSPACE (READ-ONLY)'}
+          </span>
           <h1 style={{ margin: '8px 0 4px', fontSize: '28px' }}>{data.workspace?.name}</h1>
         </div>
-        <Link to="/" className="rg-btn rg-btn-secondary">
-          <ArrowLeft size={14} /> Open ResearchGraph
-        </Link>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isEditor && (
+            <button
+              type="button"
+              className="rg-btn rg-btn-accent"
+              onClick={handleJoinAndEdit}
+              disabled={isJoining}
+            >
+              <Edit3 size={14} />
+              <span>{isJoining ? 'Joining...' : 'Join & Edit Workspace'}</span>
+            </button>
+          )}
+          <Link to="/" className="rg-btn rg-btn-secondary">
+            <ArrowLeft size={14} /> Open ResearchGraph
+          </Link>
+        </div>
       </div>
 
       <h2 style={{ fontSize: '17px', marginBottom: '12px' }}>Nodes ({data.nodes?.length || 0})</h2>

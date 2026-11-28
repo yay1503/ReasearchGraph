@@ -14,12 +14,23 @@ from controllers.graph_controller import (
     get_shared_workspace,
     get_workspace_graph,
     get_workspace_timeline,
+    invite_collaborator,
+    join_shared_workspace,
+    list_collaborators,
     list_user_workspaces,
     update_graph_node,
     update_graph_node_position,
 )
 from core.db import get_db
-from models.schemas import EdgeCreate, NodeCreate, NodePositionUpdate, NodeUpdate, WorkspaceCreate
+from models.schemas import (
+    CollaboratorInviteRequest,
+    EdgeCreate,
+    NodeCreate,
+    NodePositionUpdate,
+    NodeUpdate,
+    ShareCreateRequest,
+    WorkspaceCreate,
+)
 
 router = APIRouter(tags=["graph"])
 
@@ -95,13 +106,40 @@ async def export_workspace(workspace_id: str, db=Depends(get_db)):
 
 
 @router.post("/workspaces/{workspace_id}/share")
-async def share_workspace(workspace_id: str, db=Depends(get_db)):
-    return create_workspace_share(workspace_id, db)
+async def share_workspace(
+    workspace_id: str,
+    body: ShareCreateRequest | None = None,
+    db=Depends(get_db),
+):
+    return create_workspace_share(workspace_id, body.role if body else "editor", db)
 
 
 @router.get("/share/{share_token}")
 async def read_shared_workspace(share_token: str, db=Depends(get_db)):
     return get_shared_workspace(share_token, db)
+
+
+@router.post("/share/{share_token}/join")
+async def join_share(
+    share_token: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    return join_shared_workspace(share_token, current_user, db)
+
+
+@router.get("/workspaces/{workspace_id}/collaborators")
+async def get_collaborators(workspace_id: str, db=Depends(get_db)):
+    return list_collaborators(workspace_id, db)
+
+
+@router.post("/workspaces/{workspace_id}/collaborators")
+async def add_collaborator(
+    workspace_id: str,
+    body: CollaboratorInviteRequest,
+    db=Depends(get_db),
+):
+    return invite_collaborator(workspace_id, body.email, body.role, db)
 
 
 @router.get("/workspaces/{workspace_id}/timeline")

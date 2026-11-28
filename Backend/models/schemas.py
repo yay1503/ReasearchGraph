@@ -87,3 +87,21 @@ class AgentRateRequest(BaseModel):
 class ControllerDispatchRequest(BaseModel):
     goal: str
     auto_approve: bool = False
+
+
+class ShareCreateRequest(BaseModel):
+    role: str = "editor"
+
+
+class CollaboratorInviteRequest(BaseModel):
+    email: str
+    role: str = "editor"
+
+
+class ShareCreateRequest(BaseModel):
+    role: str = "editor"
+
+
+class CollaboratorInviteRequest(BaseModel):
+    email: str
+    role: str = "editor"

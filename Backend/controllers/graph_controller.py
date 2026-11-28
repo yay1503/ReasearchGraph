@@ -10,7 +10,7 @@ def list_user_workspaces(current_user: dict, db) -> list[dict]:
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT
+            SELECT DISTINCT
                 w.id,
                 w.name,
                 w.description,
@@ -18,10 +18,12 @@ def list_user_workspaces(current_user: dict, db) -> list[dict]:
                 w.created_at,
                 (SELECT COUNT(*) FROM nodes n WHERE n.workspace_id = w.id) AS node_count
             FROM workspaces w
-            WHERE w.user_id = %s
+            LEFT JOIN workspace_collaborators wc
+                ON wc.workspace_id = w.id AND LOWER(wc.user_email) = LOWER(%s)
+            WHERE w.user_id = %s OR wc.id IS NOT NULL
             ORDER BY w.created_at DESC
             """,
-            (current_user["id"],),
+            (current_user["email"], current_user["id"]),
         )
         return [dict(row) for row in cur.fetchall()]
 
@@ -183,15 +185,16 @@ def export_workspace_markdown(workspace_id: str, db) -> str:
     return "\n".join(lines)
 
 
-def create_workspace_share(workspace_id: str, db) -> dict:
+def create_workspace_share(workspace_id: str, role: str, db) -> dict:
+    clean_role = role if role in ("viewer", "editor") else "editor"
     with db.cursor() as cur:
         cur.execute("SELECT id, name FROM workspaces WHERE id = %s", (workspace_id,))
         ws = cur.fetchone()
         if ws is None:
             raise HTTPException(status_code=404, detail="Workspace not found")
         cur.execute(
-            "SELECT share_token FROM workspace_shares WHERE workspace_id = %s ORDER BY created_at DESC LIMIT 1",
-            (workspace_id,),
+            "SELECT share_token, role FROM workspace_shares WHERE workspace_id = %s AND role = %s ORDER BY created_at DESC LIMIT 1",
+            (workspace_id, clean_role),
         )
         existing = cur.fetchone()
         if existing:
@@ -199,18 +202,23 @@ def create_workspace_share(workspace_id: str, db) -> dict:
         else:
             token = secrets.token_urlsafe(16)
             cur.execute(
-                "INSERT INTO workspace_shares (share_token, workspace_id) VALUES (%s, %s)",
-                (token, workspace_id),
+                "INSERT INTO workspace_shares (share_token, workspace_id, role) VALUES (%s, %s, %s)",
+                (token, workspace_id, clean_role),
             )
     db.commit()
-    return {"share_token": token, "workspace_id": workspace_id, "workspace_name": ws["name"]}
+    return {
+        "share_token": token,
+        "role": clean_role,
+        "workspace_id": workspace_id,
+        "workspace_name": ws["name"],
+    }
 
 
 def get_shared_workspace(share_token: str, db) -> dict:
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT w.id, w.name, w.description, w.created_at
+            SELECT w.id, w.name, w.description, w.created_at, ws.role
             FROM workspace_shares ws
             JOIN workspaces w ON ws.workspace_id = w.id
             WHERE ws.share_token = %s
@@ -230,7 +238,63 @@ def get_shared_workspace(share_token: str, db) -> dict:
             (ws_id,),
         )
         memory = [dict(r) for r in cur.fetchall()]
-    return {"workspace": dict(ws), "nodes": nodes, "edges": edges, "memory": memory}
+    return {
+        "workspace": dict(ws),
+        "role": ws["role"],
+        "nodes": nodes,
+        "edges": edges,
+        "memory": memory,
+    }
+
+
+def join_shared_workspace(share_token: str, current_user: dict, db) -> dict:
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT workspace_id, role FROM workspace_shares WHERE share_token = %s",
+            (share_token,),
+        )
+        share = cur.fetchone()
+        if share is None:
+            raise HTTPException(status_code=404, detail="Share link not found")
+        cur.execute(
+            """
+            INSERT INTO workspace_collaborators (workspace_id, user_email, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (workspace_id, user_email) DO UPDATE SET role = EXCLUDED.role
+            """,
+            (share["workspace_id"], current_user["email"].lower(), share["role"]),
+        )
+    db.commit()
+    return {"workspace_id": share["workspace_id"], "role": share["role"]}
+
+
+def invite_collaborator(workspace_id: str, email: str, role: str, db) -> dict:
+    clean_email = email.strip().lower()
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(status_code=400, detail="Valid collaborator email is required")
+    clean_role = role if role in ("viewer", "editor") else "editor"
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO workspace_collaborators (workspace_id, user_email, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (workspace_id, user_email) DO UPDATE SET role = EXCLUDED.role
+            RETURNING *
+            """,
+            (workspace_id, clean_email, clean_role),
+        )
+        row = cur.fetchone()
+    db.commit()
+    return dict(row)
+
+
+def list_collaborators(workspace_id: str, db) -> list[dict]:
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id, workspace_id, user_email, role, created_at FROM workspace_collaborators WHERE workspace_id = %s ORDER BY created_at DESC",
+            (workspace_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
 
 def get_workspace_timeline(workspace_id: str, db) -> dict:

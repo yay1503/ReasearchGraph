@@ -28,18 +28,69 @@ def get_workspace_memory(workspace_id: str, db, limit: int = 12) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def _run_in_sandbox(script: str, timeout: int = 25) -> subprocess.CompletedProcess:
-    """Execute Python experiment code inside an isolated temporary directory."""
+def _run_in_sandbox(
+    script: str,
+    repo_url: str = "",
+    timeout: int = 35,
+) -> tuple[subprocess.CompletedProcess, dict]:
+    """
+    Execute Python experiment code inside an isolated temporary directory.
+    If a GitHub repo_url is provided, provisions a dedicated venv, shallow-clones
+    the repo, installs requirements.txt if present, and executes inside the repo.
+    """
+    meta = {"mode": "isolated_tmp", "venv": False, "repo_cloned": False, "deps_installed": False}
     with tempfile.TemporaryDirectory(prefix="rg_sandbox_") as tmp_dir:
-        script_path = Path(tmp_dir) / "experiment.py"
+        tmp_path = Path(tmp_dir)
+        work_dir = tmp_path
+        py_exec = sys.executable
+
+        clean_repo = (repo_url or "").strip()
+        if clean_repo.startswith("https://github.com/"):
+            venv_dir = tmp_path / "venv"
+            venv_proc = subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if venv_proc.returncode == 0:
+                candidate_py = venv_dir / "bin" / "python"
+                if candidate_py.exists():
+                    py_exec = str(candidate_py)
+                    meta["venv"] = True
+                    meta["mode"] = "repo_venv"
+
+            repo_dir = tmp_path / "repo"
+            clone_proc = subprocess.run(
+                ["git", "clone", "--depth", "1", clean_repo, str(repo_dir)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if clone_proc.returncode == 0 and repo_dir.exists():
+                work_dir = repo_dir
+                meta["repo_cloned"] = True
+                req_file = repo_dir / "requirements.txt"
+                if req_file.exists() and meta["venv"]:
+                    pip_proc = subprocess.run(
+                        [py_exec, "-m", "pip", "install", "-q", "-r", str(req_file)],
+                        cwd=str(repo_dir),
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    meta["deps_installed"] = pip_proc.returncode == 0
+
+        script_path = work_dir / "experiment.py"
         script_path.write_text(script, encoding="utf-8")
-        return subprocess.run(
-            [sys.executable, str(script_path)],
-            cwd=tmp_dir,
+        proc = subprocess.run(
+            [py_exec, str(script_path)],
+            cwd=str(work_dir),
             capture_output=True,
             text=True,
             timeout=timeout,
         )
+        return proc, meta
 
 
 async def run_general_experiment(
@@ -168,7 +219,13 @@ Requirements:
             )
     db.commit()
 
-    proc = _run_in_sandbox(script)
+    repo_node = next(
+        (n for n in nodes if (n.get("url") or "").startswith("https://github.com/")),
+        None,
+    )
+    repo_url = repo_node["url"] if repo_node else ""
+
+    proc, sandbox_meta = _run_in_sandbox(script, repo_url=repo_url)
     fix_node_id = None
 
     if proc.returncode != 0:
@@ -229,7 +286,7 @@ Return ONLY valid JSON:
                 "print(json.dumps({'fallback_accuracy': round(accuracy_score(y[200:], clf.predict(X[200:])), 4)}))\n"
             )
 
-        proc = _run_in_sandbox(fixed_script)
+        proc, sandbox_meta = _run_in_sandbox(fixed_script, repo_url=repo_url)
         fix_node_id = uuid.uuid4().hex
         fix_x, fix_y = await get_free_position(workspace_id, exp_x + 280, exp_y, db)
         with db.cursor() as cur:
@@ -319,6 +376,7 @@ Return ONLY valid JSON:
         "fix_node_id": fix_node_id,
         "output": last_line,
         "memory_consulted": len(memory),
+        "sandbox": sandbox_meta,
     }
 
 
