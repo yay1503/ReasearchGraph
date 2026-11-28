@@ -5,7 +5,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from llm import call_llm_json
+from core.llm import call_llm_json
 
 
 async def get_free_position(
@@ -45,7 +45,7 @@ async def run_reader_and_clusterer(
     # 1. Fetch existing paper and question nodes
     with db.cursor() as cur:
         cur.execute(
-            "SELECT id, type, title, content FROM nodes WHERE workspace_id = %s AND type IN ('paper', 'question')",
+            "SELECT id, type, title, url, content FROM nodes WHERE workspace_id = %s AND type IN ('paper', 'question')",
             (workspace_id,),
         )
         sources = [dict(row) for row in cur.fetchall()]
@@ -57,7 +57,14 @@ async def run_reader_and_clusterer(
         cur.execute("UPDATE agents SET status = 'working' WHERE id = 'agent_reader'")
     db.commit()
 
-    source_text = "\n".join([f"- [{s['type'].upper()}] {s['title']} (id: {s['id']})" for s in sources])
+    source_text = "\n".join(
+        [
+            f"- [{s['type'].upper()}] {s['title']} (id: {s['id']})"
+            + (f" | URL: {s['url']}" if s.get("url") else "")
+            + (f" | Content: {(s.get('content') or '')[:500]}" if s.get("content") else "")
+            for s in sources
+        ]
+    )
     prompt = f"""
 You are a research assistant analyzing a workspace.
 Existing nodes:

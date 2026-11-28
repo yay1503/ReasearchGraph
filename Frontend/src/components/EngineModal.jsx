@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS, getLLMConfig, saveLLMConfig } from '../utils/llmConfig';
 
-const API = 'http://127.0.0.1:8000';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 export default function EngineModal({ onClose, onSaved }) {
   const initial = getLLMConfig();

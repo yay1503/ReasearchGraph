@@ -16,9 +16,10 @@ import {
 } from 'lucide-react';
 import EngineModal from '../components/EngineModal';
 import { PROVIDERS, getLLMConfig } from '../utils/llmConfig';
+import { clearStoredAuth, getStoredAuth } from '../utils/auth';
 import { useTheme } from '../utils/theme';
 
-const API = 'http://127.0.0.1:8000';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 const CARD_ACCENTS = ['#D97706', '#2563EB', '#059669', '#7C3AED'];
 
@@ -74,7 +75,7 @@ export default function DashboardPage() {
   const [isEngineModalOpen, setIsEngineModalOpen] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('rg_token');
+    const { token } = getStoredAuth();
     if (!token) {
       navigate('/login', { replace: true });
       return;
@@ -89,9 +90,7 @@ export default function DashboardPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.status === 401) {
-          localStorage.removeItem('rg_token');
-          localStorage.removeItem('rg_user');
-          localStorage.removeItem('rg_workspace_id');
+          clearStoredAuth();
           if (!cancelled) navigate('/login', { replace: true });
           return;
         }
@@ -151,9 +150,7 @@ export default function DashboardPage() {
     } catch {
       // Clear local session regardless of network outcome
     } finally {
-      localStorage.removeItem('rg_token');
-      localStorage.removeItem('rg_user');
-      localStorage.removeItem('rg_workspace_id');
+      clearStoredAuth();
       navigate('/login', { replace: true });
     }
   };
@@ -181,8 +178,7 @@ export default function DashboardPage() {
         body: JSON.stringify({ name: trimmed }),
       });
       if (res.status === 401) {
-        localStorage.removeItem('rg_token');
-        localStorage.removeItem('rg_user');
+        clearStoredAuth();
         navigate('/login', { replace: true });
         return;
       }
@@ -223,8 +219,7 @@ export default function DashboardPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
-        localStorage.removeItem('rg_token');
-        localStorage.removeItem('rg_user');
+        clearStoredAuth();
         navigate('/login', { replace: true });
         return;
       }
@@ -266,7 +261,7 @@ export default function DashboardPage() {
       {/* Top Navigation Bar */}
       <header className="rg-dash-nav">
         <div className="rg-dash-nav-inner">
-          <Link to="/" className="rg-brand rg-brand-link">
+          <Link to="/dashboard" className="rg-brand rg-brand-link">
             ResearchGraph
           </Link>
 

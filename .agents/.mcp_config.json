@@ -5,6 +5,12 @@
       "args": [
         "@playwright/mcp@latest"
       ]
+    },
+    "mcpmarket": {
+      "httpUrl": "https://run.tieline.tools/mcp",
+      "headers": {
+        "Authorization": "Bearer sk_user_7WvhrnP-qoTRwfmNQrcJrWndv9K6RcXS"
+      }
     }
   }
 }

@@ -3,6 +3,7 @@ import DashboardPage from './pages/DashboardPage';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import SharedWorkspacePage from './pages/SharedWorkspacePage';
 import WorkspaceCanvas from './pages/WorkspaceCanvas';
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/workspace" element={<WorkspaceCanvas />} />
         <Route path="/workspace/:id" element={<WorkspaceCanvas />} />
+        <Route path="/share/:token" element={<SharedWorkspacePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
