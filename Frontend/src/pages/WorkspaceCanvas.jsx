@@ -48,12 +48,14 @@ import {
   Play,
   Share2,
   Terminal,
+  Code2,
   WifiOff,
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import ResearchNode from '../components/ResearchNode';
 import ActionModal from '../components/ActionModal';
 import EngineModal from '../components/EngineModal';
+import SandboxIDE from '../components/SandboxIDE';
 import { getNodeColor, getNodeTypeStyle } from '../nodeStyles';
 import { PROVIDERS, getLLMConfig, getLLMHeaders } from '../utils/llmConfig';
 import { getStoredAuth } from '../utils/auth';
@@ -162,6 +164,7 @@ export default function WorkspaceCanvas() {
   const [sidebarTab, setSidebarTab] = useState('activity');
   const [llmConfig, setLlmConfig] = useState(getLLMConfig);
   const [isEngineModalOpen, setIsEngineModalOpen] = useState(false);
+  const [isSandboxOpen, setIsSandboxOpen] = useState(false);
   const [liveCursors, setLiveCursors] = useState({});
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [nextSuggestions, setNextSuggestions] = useState(null);
@@ -1039,6 +1042,69 @@ export default function WorkspaceCanvas() {
     [nodes]
   );
 
+  const paperNodes = useMemo(
+    () => nodes.filter((n) => n.data?.type === 'paper'),
+    [nodes]
+  );
+
+  const handleLogSandboxResult = useCallback(
+    async ({ file, entryFile, stdout, stderr, exitCode, exit_code, duration_ms }) => {
+      if (!workspaceId) return;
+      const scriptName = file || entryFile || 'main.py';
+      const codeStatus = exitCode ?? exit_code ?? 0;
+      const trimmedStdout = (stdout || '').trim().slice(0, 1200);
+      const trimmedStderr = (stderr || '').trim().slice(0, 400);
+      const durationNote =
+        typeof duration_ms === 'number' ? ` · ${duration_ms}ms` : '';
+
+      const contentParts = [
+        `Script: ${scriptName} (exit code ${codeStatus}${durationNote})`,
+        trimmedStdout ? `\nStdout:\n${trimmedStdout}` : '',
+        !trimmedStdout && trimmedStderr ? `\nStderr:\n${trimmedStderr}` : '',
+      ].filter(Boolean);
+
+      const pos_x = Math.floor(Math.random() * 400) + 120;
+      const pos_y = Math.floor(Math.random() * 280) + 80;
+
+      const nodePayload = {
+        workspace_id: workspaceId,
+        type: 'result',
+        title: `Sandbox Run: ${scriptName} (exit ${codeStatus})`,
+        url: '',
+        content: contentParts.join('\n'),
+        tags_json: JSON.stringify(['sandbox', codeStatus === 0 ? 'passed' : 'failed']),
+        metadata_json: JSON.stringify({
+          source: 'sandbox_ide',
+          script: scriptName,
+          exit_code: codeStatus,
+          ...(typeof duration_ms === 'number' ? { duration_ms } : {}),
+        }),
+        pos_x,
+        pos_y,
+      };
+
+      try {
+        const res = await fetch(`${API}/nodes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getOptionalAuthHeaders() },
+          body: JSON.stringify(nodePayload),
+        });
+        if (!res.ok) throw new Error('Failed to create result node');
+        await refreshGraph(workspaceId);
+        setToast({
+          message: `Logged "${scriptName}" execution result to the graph.`,
+          type: 'success',
+        });
+      } catch {
+        setToast({
+          message: 'Failed to log sandbox result to the graph.',
+          type: 'error',
+        });
+      }
+    },
+    [workspaceId, refreshGraph]
+  );
+
   const groupTitleMap = useMemo(
     () => new Map(groupNodes.map((g) => [g.id, g.data?.title || 'Group'])),
     [groupNodes]
@@ -1458,6 +1524,20 @@ export default function WorkspaceCanvas() {
               </div>
             )}
           </div>
+
+          <button
+            type="button"
+            className="rg-btn rg-btn-secondary"
+            disabled={!workspaceId}
+            onClick={() => {
+              setOpenTopMenu(null);
+              setIsSandboxOpen(true);
+            }}
+            title="Open persistent Python Research Sandbox IDE"
+          >
+            <Code2 size={15} strokeWidth={1.6} />
+            <span>Sandbox IDE</span>
+          </button>
 
           <button
             type="button"
@@ -2407,6 +2487,16 @@ export default function WorkspaceCanvas() {
         <EngineModal
           onClose={() => setIsEngineModalOpen(false)}
           onSaved={(saved) => setLlmConfig(saved)}
+        />
+      )}
+
+      {/* Persistent Coding Sandbox IDE */}
+      {isSandboxOpen && workspaceId && (
+        <SandboxIDE
+          workspaceId={workspaceId}
+          paperNodes={paperNodes}
+          onClose={() => setIsSandboxOpen(false)}
+          onLogResult={handleLogSandboxResult}
         />
       )}
 

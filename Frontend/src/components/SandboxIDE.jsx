@@ -493,10 +493,13 @@ export default function SandboxIDE({
 
   const handleLogToGraph = () => {
     if (!runResult || !onLogResult) return;
+    const resolvedFile = lastRunFile || activeFile;
     onLogResult({
-      entryFile: lastRunFile || activeFile,
+      file: resolvedFile,
+      entryFile: resolvedFile,
       stdout: runResult.stdout,
       stderr: runResult.stderr,
+      exitCode: runResult.exit_code,
       exit_code: runResult.exit_code,
       duration_ms: runResult.duration_ms,
       paperTitle: meta?.paper_title || '',
