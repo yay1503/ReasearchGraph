@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 import uuid
 from pathlib import Path
 
@@ -13,11 +14,19 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 load_dotenv()
 
 
-def get_connection():
+def get_connection(retries: int = 3, delay_seconds: float = 1.0):
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is not set in environment or .env")
-    return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+    last_err = None
+    for attempt in range(retries):
+        try:
+            return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+        except psycopg2.OperationalError as err:
+            last_err = err
+            if attempt < retries - 1:
+                time.sleep(delay_seconds)
+    raise last_err
 
 
 def get_db():
