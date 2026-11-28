@@ -18,7 +18,7 @@ import EngineModal from '../components/EngineModal';
 import { PROVIDERS, getLLMConfig } from '../utils/llmConfig';
 import { useTheme } from '../utils/theme';
 
-const API = 'http://127.0.0.1:8000';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 const CARD_ACCENTS = ['#D97706', '#2563EB', '#059669', '#7C3AED'];
 

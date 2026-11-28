@@ -24,6 +24,12 @@ export const NODE_TYPE_STYLES = {
   what_if: {
     accent: '#D97706',
   },
+  code: {
+    accent: '#6366F1',
+  },
+  group: {
+    accent: '#0EA5E9',
+  },
 };
 
 export function getNodeTypeStyle(type) {

@@ -4,7 +4,7 @@ import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import AuthSplitLayout from '../components/AuthSplitLayout';
 import { syncUserWorkspace } from '../utils/auth';
 
-const API = 'http://127.0.0.1:8000';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 export default function SignupPage() {
   const navigate = useNavigate();
