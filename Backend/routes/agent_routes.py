@@ -4,6 +4,7 @@ from controllers.agent_controller import (
     analyze_workspace_sources,
     controller_dispatch,
     extract_llm_config,
+    extract_verifier_config,
     fetch_external_url,
     get_next_experiment_suggestions,
     list_all_agents,
@@ -67,9 +68,16 @@ async def dispatch_agent_endpoint(
     workspace_id: str,
     body: ControllerDispatchRequest,
     llm_config: dict = Depends(extract_llm_config),
+    verifier_config: dict | None = Depends(extract_verifier_config),
     db=Depends(get_db),
 ):
-    return await controller_dispatch(workspace_id, body, llm_config, db)
+    return await controller_dispatch(
+        workspace_id,
+        body,
+        llm_config,
+        db,
+        verifier_config=verifier_config,
+    )
 
 
 @router.get("/workspaces/{workspace_id}/logs")
@@ -105,9 +113,16 @@ async def decide_log(
     log_id: int,
     body: LogDecision,
     llm_config: dict = Depends(extract_llm_config),
+    verifier_config: dict | None = Depends(extract_verifier_config),
     db=Depends(get_db),
 ):
-    return await process_log_decision(log_id, body, llm_config, db)
+    return await process_log_decision(
+        log_id,
+        body,
+        llm_config,
+        db,
+        verifier_config=verifier_config,
+    )
 
 
 @router.post("/workspaces/{workspace_id}/agents/what-if")
@@ -130,9 +145,16 @@ async def trigger_harness(
     workspace_id: str,
     body: HarnessRequest,
     llm_config: dict = Depends(extract_llm_config),
+    verifier_config: dict | None = Depends(extract_verifier_config),
     db=Depends(get_db),
 ):
-    return await run_harness(workspace_id, body, llm_config, db)
+    return await run_harness(
+        workspace_id,
+        body,
+        llm_config,
+        db,
+        verifier_config=verifier_config,
+    )
 
 
 @router.post("/tools/upload-pdf")
@@ -155,9 +177,16 @@ async def sandbox_experiment_endpoint(
     workspace_id: str,
     body: HarnessRequest,
     llm_config: dict = Depends(extract_llm_config),
+    verifier_config: dict | None = Depends(extract_verifier_config),
     db=Depends(get_db),
 ):
-    return await run_sandbox_experiment(workspace_id, body.goal, llm_config, db)
+    return await run_sandbox_experiment(
+        workspace_id,
+        body.goal,
+        llm_config,
+        db,
+        verifier_config=verifier_config,
+    )
 
 
 @router.post("/workspaces/{workspace_id}/agents/suggest-next")

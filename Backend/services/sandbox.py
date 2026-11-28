@@ -98,6 +98,7 @@ async def run_general_experiment(
     goal: str,
     db,
     llm_config: dict | None = None,
+    verifier_config: dict | None = None,
 ) -> dict:
     """
     General-purpose paper/repo experiment runner:

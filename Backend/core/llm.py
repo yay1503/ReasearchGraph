@@ -143,6 +143,14 @@ async def call_llm(
         raise ValueError(f"Could not connect to {provider}: {exc}") from exc
 
 
+def _parse_json_reply(raw: str) -> dict:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return json.loads(cleaned)
+
+
 async def call_llm_json(
     prompt: str,
     system_prompt: str = "",
@@ -156,8 +164,68 @@ async def call_llm_json(
         timeout=timeout,
         json_mode=True,
     )
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    return json.loads(cleaned)
+    return _parse_json_reply(raw)
+
+
+def resolve_verifier_config(
+    primary_config: dict | None = None,
+    verifier_config: dict | None = None,
+) -> dict | None:
+    """Resolve optional verification/embedding model override, falling back to primary config."""
+    if not verifier_config:
+        return primary_config
+
+    v_provider = (verifier_config.get("provider") or "").strip().lower()
+    v_model = (verifier_config.get("model") or "").strip()
+    v_key = (verifier_config.get("api_key") or "").strip()
+    if not (v_provider or v_model or v_key):
+        return primary_config
+
+    primary = primary_config or {}
+    p_provider = (primary.get("provider") or "ollama").strip().lower()
+    provider = v_provider or p_provider
+    api_key = v_key or ((primary.get("api_key") or "").strip() if provider == p_provider else "")
+    return {
+        "provider": provider,
+        "model": v_model,
+        "api_key": api_key,
+    }
+
+
+async def call_verifier(
+    prompt: str,
+    system_prompt: str = "",
+    config: dict | None = None,
+    verifier_config: dict | None = None,
+    *,
+    timeout: float = 60.0,
+    json_mode: bool = False,
+) -> str:
+    """Invoke optional verification model override, falling back to primary LLM config."""
+    effective = resolve_verifier_config(config, verifier_config)
+    return await call_llm(
+        prompt,
+        system_prompt=system_prompt,
+        config=effective,
+        timeout=timeout,
+        json_mode=json_mode,
+    )
+
+
+async def call_verifier_json(
+    prompt: str,
+    system_prompt: str = "",
+    config: dict | None = None,
+    verifier_config: dict | None = None,
+    timeout: float = 60.0,
+) -> dict:
+    """Invoke optional verification model override and parse its JSON response."""
+    raw = await call_verifier(
+        prompt,
+        system_prompt=system_prompt,
+        config=config,
+        verifier_config=verifier_config,
+        timeout=timeout,
+        json_mode=True,
+    )
+    return _parse_json_reply(raw)

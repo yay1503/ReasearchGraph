@@ -81,6 +81,7 @@ async def dispatch_with_controller(
     db,
     llm_config: dict | None = None,
     auto_approve: bool = False,
+    verifier_config: dict | None = None,
 ) -> dict:
     """
     Dynamic Agent Controller:
@@ -170,6 +171,7 @@ Return ONLY valid JSON:
         db,
         llm_config=llm_config,
         auto_approve=auto_approve,
+        verifier_config=verifier_config,
     )
 
     return {

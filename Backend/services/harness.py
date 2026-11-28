@@ -4,6 +4,7 @@ import uuid
 from core.llm import call_llm_json
 from core.ws import ws_manager
 from services.agents import get_free_position
+from services.sandbox import run_general_experiment
 from services.tools import fetch_url, search_arxiv, search_github, web_search
 
 ALLOWED_NODE_TYPES = {
@@ -31,6 +32,7 @@ MUTATION_TOOLS = {
     "connect_nodes",
     "delete_node",
     "delete_edge",
+    "run_experiment",
 }
 
 
@@ -73,10 +75,19 @@ def _format_action_label(tool: str, args: dict) -> str:
         return f"[DELETE NODE] {args.get('node_id', '')}"
     if tool == "delete_edge":
         return f"[DELETE EDGE] {args.get('edge_id', '')}"
+    if tool == "run_experiment":
+        goal_text = str(args.get("goal") or "Workspace sandbox experiment").strip()
+        return f"[RUN EXPERIMENT] {goal_text[:100]}"
     return f"[{tool.upper()}]"
 
 
-async def execute_harness_action(workspace_id: str, payload: dict, db) -> dict:
+async def execute_harness_action(
+    workspace_id: str,
+    payload: dict,
+    db,
+    llm_config: dict | None = None,
+    verifier_config: dict | None = None,
+) -> dict:
     """Execute a validated JSON canvas mutation action against PostgreSQL."""
     tool = payload.get("tool")
     args = payload.get("args") or {}
@@ -219,6 +230,26 @@ async def execute_harness_action(workspace_id: str, payload: dict, db) -> dict:
         db.commit()
         return {"tool": tool, "deleted_edge_id": edge_id}
 
+    if tool == "run_experiment":
+        exp_goal = str(args.get("goal") or "").strip()
+        if not exp_goal:
+            raise ValueError("goal is required for run_experiment")
+        exp_res = await run_general_experiment(
+            workspace_id,
+            exp_goal,
+            db,
+            llm_config=llm_config,
+            verifier_config=verifier_config,
+        )
+        return {
+            "tool": tool,
+            "node_id": exp_res.get("result_node_id") or exp_res.get("experiment_node_id"),
+            "experiment_node_id": exp_res.get("experiment_node_id"),
+            "result_node_id": exp_res.get("result_node_id"),
+            "fix_node_id": exp_res.get("fix_node_id"),
+            "output": exp_res.get("output"),
+        }
+
     raise ValueError(f"Unhandled tool: {tool}")
 
 
@@ -243,15 +274,16 @@ async def run_agent_harness(
     db,
     llm_config: dict | None = None,
     auto_approve: bool = False,
+    verifier_config: dict | None = None,
 ) -> dict:
     """
     Structured JSON Agent Harness:
     1. Reads current workspace graph.
     2. Loops up to 3 steps allowing the LLM to invoke internet/read tools
        (fetch_url, search_arxiv, search_github, web_search).
-    3. Collects proposed canvas mutations (create_node, update_node, connect_nodes,
-       delete_node, delete_edge) and either queues them for user Accept/Reject
-       or executes them immediately if auto_approve=True.
+    3. Collects proposed canvas/experiment mutations (create_node, update_node,
+       connect_nodes, delete_node, delete_edge, run_experiment) and either queues
+       them for user Accept/Reject or executes them immediately if auto_approve=True.
     """
     cleaned_goal = (goal or "").strip()
     if not cleaned_goal:
@@ -275,7 +307,7 @@ You MUST reply ONLY with valid JSON matching this exact schema:
   ],
   "proposed_actions": [
     {
-      "tool": "create_node|update_node|connect_nodes|delete_node|delete_edge",
+      "tool": "create_node|update_node|connect_nodes|delete_node|delete_edge|run_experiment",
       "args": { ... },
       "reason": "Why this action helps the user's goal"
     }
@@ -295,9 +327,11 @@ Tool argument schemas:
   - connect_nodes: {"source_id": "node id", "target_id": "node id", "label": "e.g. cites, uses_dataset, answers"}
   - delete_node: {"node_id": "existing node id"}
   - delete_edge: {"edge_id": "existing edge id"}
+  - run_experiment: {"goal": "concise description of the Python experiment or benchmark to execute in the isolated sandbox"}
 
 Rules:
 - If the user mentions a paper, repo, topic, or URL you haven't fetched yet, call read_tools first with "done": false and "proposed_actions": [].
+- Use run_experiment when the user wants to run, test, benchmark, or reproduce an experiment in the Python sandbox.
 - Once you have the facts, propose concrete canvas mutations in "proposed_actions" and set "done": true.
 - Never invent fake node IDs; only reference IDs present in the Workspace Graph."""
 
@@ -376,7 +410,13 @@ Rules:
             payload = {"tool": tool_name, "args": args}
 
             if auto_approve:
-                res = await execute_harness_action(workspace_id, payload, db)
+                res = await execute_harness_action(
+                    workspace_id,
+                    payload,
+                    db,
+                    llm_config=llm_config,
+                    verifier_config=verifier_config,
+                )
                 executed.append(res)
                 with db.cursor() as cur:
                     cur.execute(

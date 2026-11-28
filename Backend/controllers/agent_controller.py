@@ -42,6 +42,19 @@ def extract_llm_config(request: Request) -> dict:
     }
 
 
+def extract_verifier_config(request: Request) -> dict | None:
+    provider = (request.headers.get("X-Verifier-Provider") or "").strip().lower()
+    model = (request.headers.get("X-Verifier-Model") or "").strip()
+    api_key = (request.headers.get("X-Verifier-API-Key") or "").strip()
+    if not (provider or model or api_key):
+        return None
+    return {
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+    }
+
+
 def list_all_agents(db) -> list[dict]:
     with db.cursor() as cur:
         cur.execute("SELECT * FROM agents ORDER BY is_active DESC, rating_score DESC, created_at ASC")
@@ -69,6 +82,7 @@ async def controller_dispatch(
     body: ControllerDispatchRequest,
     llm_config: dict,
     db,
+    verifier_config: dict | None = None,
 ) -> dict:
     return await dispatch_with_controller(
         workspace_id,
@@ -76,6 +90,7 @@ async def controller_dispatch(
         db,
         llm_config=llm_config,
         auto_approve=body.auto_approve,
+        verifier_config=verifier_config,
     )
 
 
@@ -118,6 +133,7 @@ async def process_log_decision(
     body: LogDecision,
     llm_config: dict,
     db,
+    verifier_config: dict | None = None,
 ) -> dict:
     with db.cursor() as cur:
         cur.execute(
@@ -153,6 +169,7 @@ async def process_log_decision(
             db,
             llm_config=llm_config,
             auto_approve=False,
+            verifier_config=verifier_config,
         )
         return {"status": "redirected", "log_id": log_id, "redirect": redirect_res}
 
@@ -165,7 +182,13 @@ async def process_log_decision(
 
         if isinstance(payload, dict) and payload.get("tool"):
             try:
-                exec_res = await execute_harness_action(log_row["workspace_id"], payload, db)
+                exec_res = await execute_harness_action(
+                    log_row["workspace_id"],
+                    payload,
+                    db,
+                    llm_config=llm_config,
+                    verifier_config=verifier_config,
+                )
                 return {"status": body.decision, "log_id": log_id, "executed": exec_res}
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
@@ -199,13 +222,20 @@ async def run_what_if(workspace_id: str, body: WhatIfRequest, llm_config: dict, 
     )
 
 
-async def run_harness(workspace_id: str, body: HarnessRequest, llm_config: dict, db) -> dict:
+async def run_harness(
+    workspace_id: str,
+    body: HarnessRequest,
+    llm_config: dict,
+    db,
+    verifier_config: dict | None = None,
+) -> dict:
     return await run_agent_harness(
         workspace_id,
         body.goal,
         db,
         llm_config=llm_config,
         auto_approve=body.auto_approve,
+        verifier_config=verifier_config,
     )
 
 
@@ -230,8 +260,20 @@ def set_agent_paused(agent_id: str, paused: bool, db) -> dict:
     return dict(row)
 
 
-async def run_sandbox_experiment(workspace_id: str, goal: str, llm_config: dict, db) -> dict:
-    return await run_general_experiment(workspace_id, goal, db, llm_config=llm_config)
+async def run_sandbox_experiment(
+    workspace_id: str,
+    goal: str,
+    llm_config: dict,
+    db,
+    verifier_config: dict | None = None,
+) -> dict:
+    return await run_general_experiment(
+        workspace_id,
+        goal,
+        db,
+        llm_config=llm_config,
+        verifier_config=verifier_config,
+    )
 
 
 async def get_next_experiment_suggestions(workspace_id: str, llm_config: dict, db) -> dict:
